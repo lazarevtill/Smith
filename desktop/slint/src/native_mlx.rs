@@ -237,8 +237,8 @@ pub(super) fn populate(window: &MainWindow, s: &mut UiState) {
     });
     let sampling = &s.view.mlx["settings"]["sampling"];
     ui.set_max_tokens(sampling["max_tokens"].to_string().into());
-    ui.set_temperature(sampling["temperature"].to_string().into());
-    ui.set_top_p(sampling["top_p"].to_string().into());
+    ui.set_temperature(crate::mlx::sampling_value_text(&sampling["temperature"]).into());
+    ui.set_top_p(crate::mlx::sampling_value_text(&sampling["top_p"]).into());
     ui.set_seed(
         sampling["seed"]
             .as_u64()
@@ -303,8 +303,8 @@ pub(super) fn project(window: &MainWindow, s: &mut UiState) {
                 p["plan"]["model"]["root"].as_str().unwrap_or("selected directory"),
                 p["capability"].as_str().unwrap_or("").replace('_', " "),
                 p["sampling"]["max_tokens"],
-                p["sampling"]["temperature"],
-                p["sampling"]["top_p"],
+                crate::mlx::sampling_value_text(&p["sampling"]["temperature"]),
+                crate::mlx::sampling_value_text(&p["sampling"]["top_p"]),
                 if p["thinking_mode"] == "disabled" { "Disabled" } else { "Model default" },
             )
         }.into(),

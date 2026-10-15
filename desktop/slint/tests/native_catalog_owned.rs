@@ -65,6 +65,19 @@ fn wait(w: &MainWindow, d: &Driver, p: impl Fn() -> bool) {
         std::thread::sleep(Duration::from_millis(15));
     }
 }
+fn capture(w: &MainWindow, name: &str) {
+    let Some(root) = std::env::var_os("SMITH_NATIVE_TEST_CAPTURES") else {
+        return;
+    };
+    std::fs::create_dir_all(&root).unwrap();
+    i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(200));
+    let pixels = w.window().take_snapshot().unwrap();
+    let mut bytes = format!("P6\n{} {}\n255\n", pixels.width(), pixels.height()).into_bytes();
+    for pixel in pixels.as_slice() {
+        bytes.extend_from_slice(&[pixel.r, pixel.g, pixel.b]);
+    }
+    std::fs::write(PathBuf::from(root).join(format!("{name}.ppm")), bytes).unwrap();
+}
 #[test]
 #[ignore = "Requires coordinated native build and explicit frozen catalog backend"]
 fn original_models_save_lost_receipt_select_rename_trash_restore_never_loads() {
@@ -146,6 +159,7 @@ fn original_models_save_lost_receipt_select_rename_trash_restore_never_loads() {
     wait(&w, &d, || {
         g.get_rows().row_data(0).is_some_and(|r| r.selected) && !g.get_busy()
     });
+    capture(&w, "native-catalog-selected");
     // First-use preparation before an explicit inventory observation is a
     // known pre-admission refusal, not a permanently uncertain operation.
     g.invoke_prepare(id.clone());
@@ -168,6 +182,7 @@ fn original_models_save_lost_receipt_select_rename_trash_restore_never_loads() {
     g.set_trash(true);
     g.invoke_scope_changed();
     wait(&w, &d, || g.get_rows().row_count() == 1 && !g.get_busy());
+    capture(&w, "native-catalog-trash");
     g.invoke_restore_entry(id);
     wait(&w, &d, || g.get_rows().row_count() == 0 && !g.get_busy());
     g.set_trash(false);

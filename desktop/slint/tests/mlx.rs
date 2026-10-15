@@ -1,4 +1,30 @@
 use serde_json::{json, Value};
+#[test]
+fn sampling_display_uses_declared_f32_shortest_round_trip_without_mutation() {
+    use smith_native_bridge::mlx::sampling_value_text;
+    for (number, expected) in [
+        (0.6_f32, "0.6"),
+        (0.9_f32, "0.9"),
+        (0.0000001_f32, "0.0000001"),
+    ] {
+        let value = json!(number);
+        let exact = value.clone();
+        let display = sampling_value_text(&value);
+        assert_eq!(display, expected);
+        assert_eq!(display.parse::<f32>().unwrap().to_bits(), number.to_bits());
+        assert_eq!(value, exact);
+    }
+    let smallest = f32::from_bits(1);
+    assert_eq!(
+        sampling_value_text(&json!(smallest))
+            .parse::<f32>()
+            .unwrap()
+            .to_bits(),
+        1
+    );
+    assert_eq!(sampling_value_text(&Value::Null), "Unavailable");
+    assert_eq!(sampling_value_text(&json!(f64::MAX)), "Unavailable");
+}
 use smith_native_bridge::{
     bridge::{Bridge, Result, Transport},
     mlx::{MlxSelection, ThinkingMode},

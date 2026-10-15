@@ -141,6 +141,21 @@ impl Fixture {
     pub fn advance_connection(&self) {
         self.owner.state.lock().unwrap().revision += 1;
     }
+    /// Simulate another client writing the same draft; used only by the owned
+    /// fixture to exercise visible CAS-conflict recovery in the actual window.
+    pub fn replace_draft(&self, owner: &str, text: &str) -> Result<()> {
+        if text.len() > 100_000 {
+            return Err("Synthetic draft exceeds fixture bound.".into());
+        }
+        let mut state = self.owner.state.lock().unwrap();
+        let draft = state
+            .drafts
+            .get_mut(owner)
+            .ok_or("Fixture draft not loaded.")?;
+        draft["version"] = json!(draft["version"].as_u64().unwrap() + 1);
+        draft["text"] = json!(text);
+        Ok(())
+    }
     /// Synthetic fixture output only; never used by the normal backend path.
     pub fn set_answer(&self, text: &str) -> Result<()> {
         if text.len() > 100_000 {

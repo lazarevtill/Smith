@@ -401,6 +401,20 @@ fn original_window_callbacks_drive_owned_http_and_clear_revoked_content() {
     wait(&window, &driver, || {
         window.global::<NativeSettings>().get_available()
     });
+    if !window.get_status_text().is_empty() {
+        let position = slint::LogicalPosition::new(1182.0, 18.0);
+        let button = slint::platform::PointerEventButton::Left;
+        window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+        window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button });
+        window
+            .window()
+            .dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button });
+    }
+    capture(&window, "compact-settings-ready");
     let settings = window.global::<NativeSettings>();
     settings.set_provider_index(2);
     settings.set_endpoint("http://127.0.0.1:18777/v1".into());
@@ -501,6 +515,7 @@ fn original_window_callbacks_drive_owned_http_and_clear_revoked_content() {
     // an owned synthetic transport, with no worker/model execution.
     window.set_active_view(2);
     window.set_settings_tab(3);
+    settings.set_engine_index(1);
     let mlx = window.global::<NativeMlx>();
     mlx.invoke_refresh();
     wait(&window, &driver, || mlx.get_available() && !mlx.get_busy());
@@ -512,6 +527,8 @@ fn original_window_callbacks_drive_owned_http_and_clear_revoked_content() {
     mlx.invoke_prepare();
     wait(&window, &driver, || mlx.get_can_load() && !mlx.get_busy());
     assert!(mlx.get_review().contains("Thinking: Disabled"));
+    assert!(mlx.get_review().contains("temperature 0.6 · top-p 0.9"));
+    assert!(!mlx.get_review().contains("0.600000023"));
     capture(&window, "native-thinking-review");
     assert_eq!(
         control.0.lock().unwrap().mlx["prepared"]["thinking_mode"],
@@ -602,6 +619,7 @@ fn original_window_callbacks_drive_owned_http_and_clear_revoked_content() {
         1,
         "settings refresh must preserve the explicit catalog adapter"
     );
+    capture(&window, "native-catalog-mlx-handoff");
     let body = control
         .0
         .lock()

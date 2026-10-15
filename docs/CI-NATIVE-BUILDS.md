@@ -2,6 +2,8 @@
 
 The public source tree contains the active build-only workflow [`.github/workflows/native-build.yml`](../.github/workflows/native-build.yml), triggered on push or manual dispatch. It uses one checkout of this repository and the self-contained reviewed UI snapshot under `vendor/smith-ui`. No separate source repository, original Git history, private token or model package is needed. The original GitLab upstream and anyLC are not CI inputs or publication destinations. Configuration validation is complete; **Windows/Linux build success must be established by the actual job results, not this document.**
 
+The [first hosted run](https://github.com/lazarevtill/Smith/actions/runs/38823025776), at source commit `98b28d4eb02d60776d22bdf22d2b113985a64012`, passed the Linux backend and both Linux/Windows native UI builds. The Windows backend failed because a globally compiled transcription function signature referenced Unix-only `libc::rlim_t`. The follow-up keeps that implementation under `cfg(unix)` and explicitly refuses non-Unix execution before spawning; it does not add Windows transcription support. The corrected source needs its own hosted build result. No runtime or hardware test ran in these jobs.
+
 ## Build inputs
 
 | Lane | Compiler | Normal build | Hosted runner |
@@ -54,6 +56,6 @@ These are implementation boundaries found by reading current source, not cross-p
 | Native file chooser/save dialogs | `desktop/slint/src/picker.rs` reports unavailable | Same explicit unavailability |
 | GPU inventory | Fixed proc/sysfs observation implementation; native execution unqualified | Win32/DXGI observation implementation; native compile/runtime unqualified |
 
-No definite Windows or Linux compile failure is claimed without a native compiler result. For example, the media crate's disk `MediaStore` is gated to macOS/Linux, but the current application media API does not import it; that gate alone is **not** evidence of a backend compile failure. Initial CI is intended to expose actual cfg, FFI, dependency and linker failures. Source-level unsupported returns can compile successfully while still preventing a usable product journey.
+The Windows transcription signature failure above is an observed compiler result. Other source gates should not be mistaken for build failures: for example, the media crate's disk `MediaStore` is gated to macOS/Linux, but the current application media API does not import it. That gate alone does not establish a compile failure. Source-level unsupported returns can compile successfully while still preventing a usable product journey.
 
 Passing these four builds would establish that the normal backend and UI compile on the specified targets. It would not establish application startup, secure storage, packaged launch, accessibility, task execution, CUDA/HIP/ROCm/SYCL/Intel Arc/Vulkan/Metal/MLX support, model placement, latency, memory fit or optimized defaults. Those require later owned synthetic lifecycle tests and explicit real-device/model qualification; CPU-vendor/GPU identifiers alone are insufficient.

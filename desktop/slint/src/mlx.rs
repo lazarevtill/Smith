@@ -34,6 +34,18 @@ pub fn supports_thinking_control(status: &Value) -> bool {
         modes.iter().any(|v| v == "model_default") && modes.iter().any(|v| v == "disabled")
     })
 }
+/// Sampling fields are declared f32 by the runtime contract. Format that value
+/// with Rust's shortest round-trip representation instead of showing the f64
+/// tail introduced by JSON serialization. This never changes the stored value
+/// or the exact prepared-plan comparison.
+pub fn sampling_value_text(value: &Value) -> String {
+    value
+        .as_f64()
+        .map(|number| number as f32)
+        .filter(|number| number.is_finite())
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| "Unavailable".into())
+}
 fn expected(c: &Config) -> Value {
     json!({"revision":c.revision,"provider":c.provider,"endpoint":c.endpoint})
 }

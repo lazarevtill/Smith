@@ -58,28 +58,66 @@ pub fn apply_window(mut source: String) -> String {
         "root.delete-session(idx);",
         1,
     );
+    // Keep actions inside the existing Chats header instead of adding a global
+    // toolbar. Slint's menu provides keyboard navigation, Escape and disabled
+    // entries; the existing button owns focus only when explicitly activated.
     replace(
         &mut source,
-        "text: \"Chats\";",
-        "text: root.native-trash-view ? \"Trash\" : \"Chats\";",
+        r#"                Text {
+                    text: "Chats";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 22px;
+                    font-weight: 600;
+                }"#,
+        r#"                HorizontalLayout {
+                    height: 32px; spacing: 8px;
+                    Text {
+                        text: root.native-trash-view ? "Trash" : "Chats";
+                        color: Palette.text-strong; font-family: Palette.font-display;
+                        font-size: 22px; font-weight: 600;
+                        vertical-alignment: center; horizontal-stretch: 1;
+                    }
+                    chat-actions := ContextMenuArea {
+                        width: 32px; height: 32px;
+                        SmithButton {
+                            text: ""; width: 32px; height: 32px; kind: "ghost"; accessible-label: "Chat actions";
+                            Image { source: Icons.more-horizontal; width: 18px; height: 18px; x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; colorize: Palette.text-subtle; }
+                            clicked => { chat-actions.show({ x: 0px, y: self.height }); }
+                        }
+                        Menu {
+                            MenuItem { title: "Back"; enabled: root.native-can-back && !root.session-loading; activated => { root.native-back(); } }
+                            MenuItem { title: "Forward"; enabled: root.native-can-forward && !root.session-loading; activated => { root.native-forward(); } }
+                            MenuSeparator {}
+                            MenuItem { title: root.native-undo-label; enabled: root.native-can-undo && !root.streaming && !root.session-loading; activated => { root.native-undo(); } }
+                            MenuItem { title: root.native-redo-label; enabled: root.native-can-redo && !root.streaming && !root.session-loading; activated => { root.native-redo(); } }
+                            MenuSeparator {}
+                            MenuItem { title: root.native-trash-view ? "Back to chats" : "Trash"; enabled: !root.session-loading; activated => { root.native-toggle-trash(); } }
+                            MenuItem { title: NativeBatch.mode ? "Done selecting" : "Select chats"; enabled: NativeBatch.enabled && !NativeBatch.busy && !root.session-loading; activated => { NativeBatch.toggle-mode(); } }
+                        }
+                    }
+                }"#,
         1,
     );
     replace(&mut source, "root.composer-text = \"\";\n                                            root.editing-message = false;\n                                            root.filter-slash(\"\");", "root.native-cancel-edit();", 1);
+    // Transient saving and recovery belong beside the draft. Idle saved drafts
+    // have no permanent status line and Settings receives no chat controls.
     replace(
         &mut source,
-        "    // ===== transient status banner",
-        r#"    HorizontalLayout {
-        padding-left: 12px; padding-right: 12px; padding-top: 2px; padding-bottom: 2px;
-        spacing: 8px;
-        SmithButton { height: 32px; text: "Back"; width: 72px; enabled: root.native-can-back && !root.session-loading; clicked => { root.native-back(); } }
-        SmithButton { height: 32px; text: "Forward"; width: 84px; enabled: root.native-can-forward && !root.session-loading; clicked => { root.native-forward(); } }
-        SmithButton { height: 32px; text: root.native-undo-label; width: 166px; enabled: root.native-can-undo && !root.streaming && !root.session-loading; clicked => { root.native-undo(); } }
-        SmithButton { height: 32px; text: root.native-redo-label; width: 166px; enabled: root.native-can-redo && !root.streaming && !root.session-loading; clicked => { root.native-redo(); } }
-        SmithButton { height: 32px; text: root.native-trash-view ? "Back to chats" : "Trash"; width: 110px; enabled: !root.session-loading; clicked => { root.native-toggle-trash(); } }
-        Text { text: root.native-draft-status; color: Palette.text-subtle; font-family: Palette.font-mono; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-        if root.native-draft-conflict: SmithButton { height: 32px; text: "Discard unsaved & reload"; width: 190px; clicked => { root.native-discard-draft(); } }
-    }
-    // ===== transient status banner"#,
+        "                        padding-bottom: 20px;\n\n                        Rectangle {",
+        r#"                        padding-bottom: 20px;
+                        spacing: 6px;
+                        if root.native-draft-status != "": HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: root.native-draft-status; color: root.native-draft-conflict ? Palette.error-text : Palette.text-subtle; font-family: Palette.font-body; font-size: 12px; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; }
+                            if root.native-draft-conflict: SmithButton {
+                                text: "Discard & reload"; accessible-label: "Discard unsaved draft and reload saved draft";
+                                kind: "ghost"; height: 32px; width: 144px; enabled: !root.session-loading;
+                                clicked => { root.native-discard-draft(); }
+                            }
+                        }
+
+                        Rectangle {"#,
         1,
     );
     replace(
@@ -177,7 +215,7 @@ pub fn apply_window(mut source: String) -> String {
     replace(
         &mut source,
         "                // Session search (P4",
-        "                NativeBatchControls {}\n                // Session search (P4",
+        "                if NativeBatch.mode: NativeBatchControls {}\n                // Session search (P4",
         1,
     );
     replace(

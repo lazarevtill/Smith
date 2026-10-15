@@ -1385,6 +1385,7 @@ async fn run_child_owned(
     }
     parse_output(&bytes, duration)
 }
+#[cfg(unix)]
 async fn run_command(
     owner: &mut CleanupOwner,
     mut command: Command,
@@ -1467,6 +1468,50 @@ async fn run_command(
         return Err(failed());
     }
     active(cancel)
+}
+
+#[cfg(not(unix))]
+async fn run_command(
+    _owner: &mut CleanupOwner,
+    _command: Command,
+    cancel: &Cancellation,
+    _deadline: Duration,
+    _file_limit: u64,
+    _cpu_limit: u64,
+) -> MediaResult<()> {
+    // No process may start without the adapter's resource and custody controls.
+    // These numeric limits are not interpreted as supported Windows rlimits.
+    active(cancel)?;
+    Err(unsupported())
+}
+
+#[cfg(all(test, not(unix)))]
+#[tokio::test]
+async fn unsupported_command_never_acquires_child_ownership() {
+    // No scratch directory or executable is created by this refusal test.
+    let mut owner = CleanupOwner::new(Scratch(PathBuf::new()));
+    let cancel = Cancellation::new();
+    for expected in [
+        "transcription_adapter_unsupported",
+        "transcription_cancelled",
+    ] {
+        let error = run_command(
+            &mut owner,
+            Command::new("smith-transcription-must-not-spawn"),
+            &cancel,
+            Duration::from_secs(1),
+            1,
+            1,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, expected);
+        assert!(owner.child.is_none());
+        assert!(owner.pid.is_none());
+        assert!(!owner.group_pending);
+        assert_eq!(owner.signal_attempts, 0);
+        cancel.cancel();
+    }
 }
 
 #[cfg(test)]

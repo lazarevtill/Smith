@@ -1428,11 +1428,9 @@ fn project_actions(window: &MainWindow, state: &UiState) {
     window.set_native_draft_conflict(state.view.draft.conflict);
     window.set_native_draft_status(
         if state.view.draft.conflict {
-            "Draft not saved"
+            "Draft not saved. Your text is retained."
         } else if state.view.draft.dirty {
             "Saving draft…"
-        } else if state.view.available {
-            "Draft saved locally"
         } else {
             ""
         }
