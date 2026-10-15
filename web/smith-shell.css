@@ -1,0 +1,70 @@
+/* Original Smith geometry: app-window.slint:1015–1515, light palette only.
+   The browser host is a development surface for the desktop application. */
+:root{--rail:64px;--sidebar:300px}
+.app{grid-template-columns:var(--rail) var(--sidebar) minmax(0,1fr)}
+.smith-rail{display:flex;flex-direction:column;align-items:center;gap:8px;padding:18px 6px 16px;background:#0a0a0b;min-height:0;z-index:16}
+.smith-rail .rail-brand{display:block;width:34px;height:34px;margin-bottom:10px}
+.smith-rail .rail-brand svg{width:34px;height:34px}
+.smith-rail button{position:relative;width:44px;height:44px;min-height:44px;border:0;padding:0;border-radius:4px;background:transparent;color:#b6b6bd}
+.smith-rail button:hover:not(:disabled){background:#161618;color:#fff}
+.smith-rail button[aria-current=page]{background:#232327;color:#fff}
+.smith-rail button[aria-current=page]::before{position:absolute;left:-10px;top:10px;bottom:10px;width:3px;background:#f81a2c;content:''}
+.smith-rail button svg{width:21px;height:21px;stroke-width:1.75}
+.smith-rail .rail-spacer{flex:1}
+.sidebar{padding:18px;gap:14px}
+.sidebar .brand{font-size:22px;letter-spacing:0;padding:0}
+.sidebar .brand-mark,.sidebar-caption,.sidebar .section-label{display:none}
+.new-chat{min-height:36px;font-size:13px;justify-content:center;background:var(--primary);border-color:var(--primary);color:#fff}
+.new-chat:hover:not(:disabled){background:var(--primary-hover)}
+.history-search-field{padding:0}
+.history-search-field label,.history-search-field #history-search-hint{display:none}
+.history-search-field input{height:36px}
+.history-search-field #history-result-status:empty{display:none}
+.history .history-row{align-items:center;min-height:62px}
+.history .history-row>button:first-of-type{min-height:62px;padding:12px 14px}
+.history .history-row .row-trash{opacity:0}
+.history .history-row:hover .row-trash,.history .history-row:focus-within .row-trash{opacity:1}
+.history button.active{background:var(--soft)}
+.history-title,.history-subtitle{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.history-subtitle{margin-top:5px;font-size:11px;line-height:1.4;font-weight:400;color:var(--muted)}
+.sidebar-bottom{gap:2px;padding-top:8px}
+.sidebar-bottom button{font-size:12px;min-height:34px}
+.sidebar-bottom #file-tasks-button,.sidebar-bottom #documents-button,.sidebar-bottom #legacy-records-button{display:none}
+.sidebar-bottom>div:last-child{display:none}
+.topbar{min-height:64px;padding:10px 20px 10px 24px;gap:10px}
+.topbar-title{font-size:16px;letter-spacing:0}
+.topbar-sub{font-size:10px}
+.top-actions{gap:4px;min-width:0}
+.top-actions .model-select{max-width:220px;min-height:28px;font-size:11px}
+.workspace{padding:24px;background:var(--soft);scroll-behavior:auto}
+.welcome{max-width:560px;margin:0 auto;min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.welcome .welcome-mark{width:56px;height:56px;margin-bottom:12px}
+.welcome .welcome-mark svg{width:56px;height:56px}
+.welcome h1{font-size:20px;line-height:1.4;font-weight:600;letter-spacing:0;margin:0 0 12px}
+.welcome .intro{font-size:13px;line-height:1.5;margin:0;max-width:440px}
+.welcome .privacy-note{justify-content:center;margin-top:18px;font-size:12px;max-width:440px}
+.welcome #connect-welcome{min-height:36px;margin-top:16px!important}
+.composer-wrap{padding:16px 24px;background:var(--bg)}
+.composer-inner,.messages{max-width:900px}
+.composer-controls{justify-content:flex-end}
+.composer-controls #attach-text{margin-right:auto}
+.privacy-storage{font-size:10px!important}
+.workspace-screen[open]{width:calc(100vw - var(--rail))!important;max-width:none!important;max-height:none!important}
+.workspace-screen{position:fixed;inset:0 0 0 var(--rail);margin:0;width:calc(100vw - var(--rail));height:100dvh;max-width:none;max-height:none;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;border:0;border-radius:0;box-shadow:none;z-index:13;background:var(--bg)}
+.workspace-screen>.dialog-head{min-height:72px;padding:18px 24px}
+.workspace-screen>.dialog-head h2{font-size:22px}
+.workspace-screen>.dialog-body,.workspace-screen>form>.dialog-body{max-width:1100px;padding:24px;margin:0 auto}
+.workspace-screen>form>.dialog-head{padding:18px 24px}
+.workspace-screen>form>.dialog-footer{position:sticky;bottom:0}
+.workspace-tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:12px 24px}
+.workspace-tabs button{min-height:36px;font-size:13px;padding:0 14px;border-color:transparent}
+.workspace-tabs button[aria-current=page]{border-color:var(--line);border-bottom:2px solid var(--accent);background:var(--soft)}
+.activity-rows{display:grid;gap:0;border:1px solid var(--line);border-radius:4px}
+.activity-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px;border-bottom:1px solid var(--line)}
+.activity-row:last-child{border-bottom:0}
+.activity-row p{margin:5px 0 0;font-size:12px;color:var(--muted);line-height:1.5}
+.activity-row button{min-height:36px;font-size:12px}
+.app[data-workspace-view]:not([data-workspace-view=chat])>.sidebar,.app[data-workspace-view]:not([data-workspace-view=chat])>.main{visibility:hidden}
+@media(max-width:1100px){:root{--sidebar:220px}.sidebar{padding:14px}.topbar{flex-wrap:wrap}.top-actions{flex-wrap:wrap;max-width:100%}.workspace{padding:20px}.composer-wrap{padding:14px 20px}.top-actions .model-select{max-width:180px}}
+@media(max-width:767px){:root{--rail:52px}.app{grid-template-columns:var(--rail) minmax(0,1fr)}.smith-rail{padding-left:4px;padding-right:4px}.smith-rail button[aria-current=page]::before{left:-4px}.sidebar{left:var(--rail);width:min(300px,calc(100vw - var(--rail)))}.sidebar.open{z-index:17}.smith-rail{z-index:16}.workspace-screen{z-index:13}.topbar{padding:10px 12px}.workspace{padding:20px 12px}.composer-wrap{padding:12px}.top-actions .model-select{max-width:150px}.welcome h1{font-size:20px}.welcome .intro{font-size:13px}.workspace-screen>.dialog-head,.workspace-screen>form>.dialog-head{padding:16px}.workspace-screen>.dialog-body,.workspace-screen>form>.dialog-body{padding:16px}.workspace-tabs{padding:8px}.activity-row{align-items:flex-start;flex-direction:column}.history .history-row .row-trash{opacity:1}.sidebar-bottom button{min-height:44px}.privacy-storage{font-size:11px!important}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}

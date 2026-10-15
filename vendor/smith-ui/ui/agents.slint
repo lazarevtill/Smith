@@ -1,0 +1,643 @@
+// Agents management view (a panel inside the main window): list agents on the
+// left, create/edit one on the right. Backed by the Database CRUD
+// (list/get/upsert/delete agent) wired in smith-ui/src/lib.rs.
+
+import { LineEdit, TextEdit, ComboBox, ListView, ScrollView } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck, EmptyState, ConfirmButton } from "theme.slint";
+import { Icons } from "icons.slint";
+
+// One agent row. Mirrors the fields the list needs from `domain::Agent`.
+export struct AgentItem {
+    id: string,
+    name: string,
+    model: string,
+    prompt: string,
+}
+
+// One interaction-learning signal (P2 "What Smith learned"). Deliberately
+// carries no free-text `metadata` (the pre-edit text on an `Edited` signal) —
+// that field is scrub-at-egress and intentionally has no consumer yet outside
+// storage + the API boundary that originates it (see
+// `smith_core::domain::metadata_egress_audit`); a local read-only display is
+// a real new read site that decision hasn't been extended to cover, so this
+// panel shows only the signal's kind/timing, never its text.
+export struct SignalItem {
+    kind: string,
+    when: string,
+}
+
+// One distilled lesson (P2 "What Smith learned"). Mirrors `domain::Lesson`
+// minus its embedding.
+export struct LessonItem {
+    id: string,
+    polarity: string,
+    trigger: string,
+    corrected-behavior: string,
+    usage: string,
+}
+
+export component AgentsView inherits Rectangle {
+    background: Palette.page;
+
+    in property <[AgentItem]> agents;
+    in property <[string]> models;
+    // Edit form fields (bound two-way to MainWindow).
+    in-out property <string> agent-name;
+    in-out property <string> agent-prompt;
+    in-out property <string> agent-model;
+    in-out property <string> agent-working-dir;
+    in-out property <string> agent-soul;
+    in-out property <bool> agent-memory;
+    in-out property <bool> agent-tools;
+    in-out property <bool> agent-computer-use;
+    in-out property <bool> agent-image-generation;
+    // The global autonomy policy governing computer-use (Settings → Privacy,
+    // P2 "computer-use: currently inert — decide") — shown next to the
+    // per-agent checkbox so it visibly reflects real gate state instead of
+    // being a disconnected toggle that silently no-ops under a strict
+    // policy. Locked denies computer-use outright regardless of this box.
+    in property <string> global-computer-use-policy: "Read-only";
+    // Id of the agent being edited; "" means a new agent.
+    in-out property <string> editing-agent: "";
+    // Busy while Save is persisting (DB upsert + SOUL write) — disables the
+    // button and swaps its label so a slow disk/DB write can't be mistaken
+    // for a dead click (or double-queued by an impatient second click).
+    in property <bool> agent-saving: false;
+    in property <bool> agent-loading: false;
+    in property <bool> agent-deleting: false;
+    // "" | "✓ Saved." | an error — set once the save round-trip finishes, so
+    // there's positive confirmation the click actually did something (this
+    // used to just silently refresh the list with no feedback at all).
+    in property <string> agent-save-status: "";
+    // Whether `agent-save-status` is an error, decided in Rust rather than
+    // sniffed out of the message text in .slint (mirrors `agent-evolve-is-error`).
+    in property <bool> agent-save-is-error: false;
+
+    // ---- Run this agent (foreground / background dispatch) ----
+    in-out property <string> agent-run-input: "";
+    // "" | "running" | "done" | "error" — drives the status label + busy state.
+    in property <string> agent-run-state: "";
+    // The foreground reply text, or the error message, once the run finishes.
+    in property <string> agent-run-result: "";
+
+    // ---- "What Smith learned" (P2): read-only interaction-learning panel ----
+    in property <[SignalItem]> agent-signals;
+    in property <[LessonItem]> agent-lessons;
+    // The live champion SOUL text (from `Database::get_soul`), read-only here
+    // — distinct from `agent-soul` above, which is the *editable* form field
+    // (may hold unsaved edits). "" when the agent has no SOUL yet.
+    in property <string> agent-soul-current: "";
+    // "" (no challenger staged yet) or a one-line summary with both scores,
+    // e.g. "Staged 2026-07-01 — challenger 0.84 vs champion 0.79".
+    in property <string> agent-challenger-summary: "";
+    // "" | "running" | a result line ("✓ Promoted — 0.84 beat 0.79" /
+    // "Champion kept — 0.79 vs 0.76") | an error message.
+    in property <string> agent-evolve-state: "";
+    // Whether `agent-evolve-state` is an error (routing failure) vs a normal
+    // promoted/kept-champion outcome — decided in Rust rather than sniffed
+    // out of the message text in .slint.
+    in property <bool> agent-evolve-is-error: false;
+    callback evolve-agent-now();
+
+    callback save-agent();
+    callback delete-agent(string);
+    callback new-agent();
+    callback select-agent(string);
+    // Run this agent in the foreground: show the reply right here.
+    callback run-agent-foreground();
+    // Run this agent in the background: dispatch it and land in the Activity view.
+    callback run-agent-background();
+    callback open-runs();
+
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0;
+
+        // ---- left: agent list ----
+        Rectangle {
+            width: 240px;
+            background: Palette.page;
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Palette.border;
+            }
+            VerticalLayout {
+                padding: 18px;
+                spacing: 14px;
+                Text {
+                    text: "Agents";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 22px;
+                    font-weight: 600;
+                }
+                SmithButton {
+                    text: "+   New agent";
+                    kind: "primary";
+                    // Blocks starting a new/blank form while the currently
+                    // edited agent's own Save is still writing — otherwise a
+                    // stale save completion later silently re-attaches the
+                    // form to the old agent's id (see agent-saving below).
+                    enabled: !root.agent-saving;
+                    clicked => {
+                        root.new-agent();
+                    }
+                }
+                if root.agents.length == 0: EmptyState {
+                    vertical-stretch: 1;
+                    icon: Icons.users;
+                    title: "No agents yet";
+                    message: "Create a focused assistant with its own prompt, model, memory, and tools — use New agent above.";
+                }
+                if root.agents.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for a in root.agents: Rectangle {
+                        height: 60px;
+                        border-radius: Palette.radius;
+                        background: a.id == root.editing-agent
+                            ? Palette.sunken
+                            : (arow.has-hover ? Palette.hover : transparent);
+                        animate background { duration: 100ms; }
+                        Rectangle {
+                            x: 0;
+                            y: 12px;
+                            width: 3px;
+                            height: parent.height - 24px;
+                            border-radius: 2px;
+                            background: Palette.accent;
+                            opacity: a.id == root.editing-agent ? 1.0 : 0.0;
+                        }
+                        arow := TouchArea {
+                            // Same reasoning as "New agent": switching to a
+                            // different agent while a save is in flight for
+                            // the current one leaves that save's stale
+                            // completion handler to silently re-attach the
+                            // form to the wrong agent once it finally lands.
+                            enabled: !root.agent-saving;
+                            mouse-cursor: root.agent-saving ? default : pointer;
+                            clicked => {
+                                root.select-agent(a.id);
+                            }
+                        }
+                        HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 12px;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 3px;
+                                Text {
+                                    text: a.name;
+                                    color: Palette.text-strong;
+                                    font-family: Palette.font-body;
+                                    font-size: 14px;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: a.model == "" ? "default model" : a.model;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-mono;
+                                    font-size: 11px;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- right: edit form ----
+        ScrollView {
+            VerticalLayout {
+                alignment: start;
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: root.agent-loading ? "Loading agent..." : (root.editing-agent == "" ? "New agent" : "Edit agent");
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 22px;
+                    font-weight: 600;
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "Name";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    LineEdit {
+                        enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                        text <=> root.agent-name;
+                        placeholder-text: "e.g. Research Assistant";
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "Model";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    HorizontalLayout {
+                        ComboBox {
+                        enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                            horizontal-stretch: 1;
+                            min-width: 0px;
+                            model: root.models;
+                            current-value <=> root.agent-model;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "Working directory (optional)";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    LineEdit {
+                        enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                        text <=> root.agent-working-dir;
+                        placeholder-text: "e.g. D:/projects/myapp — injects folder context + scopes tools";
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "System prompt";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    Rectangle {
+                        height: 200px;
+                        border-radius: Palette.radius;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        background: Palette.raised;
+                        clip: true;
+                        TextEdit {
+                        enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                            x: 2px;
+                            y: 2px;
+                            width: parent.width - 4px;
+                            height: parent.height - 4px;
+                            text <=> root.agent-prompt;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "Soul (stable preferences the agent learns about you)";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    Rectangle {
+                        height: 110px;
+                        border-radius: Palette.radius;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        background: Palette.raised;
+                        clip: true;
+                        TextEdit {
+                        enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                            x: 2px;
+                            y: 2px;
+                            width: parent.width - 4px;
+                            height: parent.height - 4px;
+                            text <=> root.agent-soul;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "Capabilities";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    SmithCheck {
+                        enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                        text: "Memory (recall + ingest)";
+                        checked <=> root.agent-memory;
+                    }
+                    SmithCheck {
+                        enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                        text: "Tools (file / git / shell / MCP)";
+                        checked <=> root.agent-tools;
+                    }
+                    SmithCheck {
+                        enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                        text: "Computer use (screen + input)";
+                        checked <=> root.agent-computer-use;
+                    }
+                    // The checkbox only grants this agent *access* to the
+                    // computer-use tools — whether an action actually runs is
+                    // still decided by the global autonomy policy at call
+                    // time. Say so inline instead of leaving a checkbox that
+                    // can silently no-op under a strict policy.
+                    Text {
+                        text: "Global policy: " + root.global-computer-use-policy
+                            + (root.global-computer-use-policy == "Locked"
+                                ? " — computer-use is blocked for every agent. Change this in Settings → Privacy."
+                                : root.global-computer-use-policy == "Read-only"
+                                    ? " — screenshots only; clicks/typing are denied. Change this in Settings → Privacy."
+                                    : "");
+                        color: Palette.text-muted;
+                        font-family: Palette.font-body;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                    SmithCheck {
+                        enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                        text: "Image generation (local diffusion)";
+                        checked <=> root.agent-image-generation;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    SmithButton {
+                        text: root.agent-deleting ? "Deleting..." : (root.agent-saving ? "Saving…" : "Save");
+                        kind: "primary";
+                        width: 120px;
+                        enabled: !root.agent-saving && !root.agent-loading && !root.agent-deleting;
+                        clicked => {
+                            root.save-agent();
+                        }
+                    }
+                    if root.editing-agent != "": ConfirmButton {
+                        label: "Delete";
+                        kind: "destructive";
+                        confirm-text: "Delete agent?";
+                        reset-key: root.editing-agent;
+                        // Blocks Delete while this agent's own Save is still
+                        // writing — without this, a delete-during-save race
+                        // can silently resurrect the agent (the in-flight
+                        // save's upsert has no "does this row still exist"
+                        // check and would recreate it after the delete).
+                        enabled: !root.agent-saving && !root.agent-loading && !root.agent-deleting;
+                        confirmed => {
+                            root.delete-agent(root.editing-agent);
+                        }
+                    }
+                    if root.agent-save-status != "": Text {
+                        vertical-alignment: center;
+                        text: root.agent-save-status;
+                        color: root.agent-save-is-error ? Palette.red : Palette.success;
+                        font-family: Palette.font-body;
+                        font-size: 12px;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+
+                // ---- Run this agent — a saved agent can be executed directly
+                // from here (foreground, showing the reply below) or dispatched
+                // to run in the background (tracked in the Activity view).
+                if root.editing-agent != "": VerticalLayout {
+                    spacing: 8px;
+                    Rectangle {
+                        height: 1px;
+                        background: Palette.border;
+                    }
+                    Text {
+                        text: "Run this agent";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    LineEdit {
+                        text <=> root.agent-run-input;
+                        placeholder-text: "What should it do?";
+                        enabled: root.agent-run-state != "running" && !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        SmithButton {
+                            text: root.agent-run-state == "running" ? "Running…" : "▶  Run";
+                            kind: "secondary";
+                            enabled: root.agent-run-state != "running" && !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                            clicked => {
+                                root.run-agent-foreground();
+                            }
+                        }
+                        SmithButton {
+                            text: root.agent-run-state == "running" ? "Manage run" : "Background run";
+                            kind: "secondary";
+                            enabled: !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                            clicked => {
+                                if root.agent-run-state == "running" {
+                                    root.open-runs();
+                                } else {
+                                    root.run-agent-background();
+                                }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    if root.agent-run-result != "": Rectangle {
+                        border-radius: Palette.radius;
+                        border-width: 1px;
+                        border-color: root.agent-run-state == "error" ? Palette.red : Palette.border;
+                        background: Palette.sunken;
+                        height: run-result-text.preferred-height + 20px;
+                        run-result-text := Text {
+                            x: 11px;
+                            y: 10px;
+                            width: parent.width - 22px;
+                            text: root.agent-run-result;
+                            color: root.agent-run-state == "error" ? Palette.red : Palette.text-body;
+                            font-family: Palette.font-body;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // ---- "What Smith learned" (P2): a read-only view of the
+                // interaction-learning loop for this agent — signals
+                // captured, lessons distilled from them, and the eval-gated
+                // SOUL self-evolution state — plus an "Evolve now" button so
+                // pressing 👍/👎 visibly pays off instead of vanishing into a
+                // background toggle nobody can see the effect of.
+                if root.editing-agent != "": VerticalLayout {
+                    spacing: 10px;
+                    Rectangle {
+                        height: 1px;
+                        background: Palette.border;
+                    }
+                    Text {
+                        text: "What Smith learned";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+
+                    Text {
+                        text: "SOUL (self-evolving preference layer)";
+                        color: Palette.text-muted;
+                        font-family: Palette.font-body;
+                        font-size: 11px;
+                        font-weight: 600;
+                    }
+                    Rectangle {
+                        border-radius: Palette.radius;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        background: Palette.sunken;
+                        height: soul-lay.preferred-height + 16px;
+                        soul-lay := VerticalLayout {
+                            x: 11px;
+                            y: 8px;
+                            width: parent.width - 22px;
+                            spacing: 4px;
+                            Text {
+                                text: root.agent-soul-current == "" ? "No SOUL yet — evolves after enough feedback." : root.agent-soul-current;
+                                color: Palette.text-body;
+                                font-family: Palette.font-mono;
+                                font-size: 11.5px;
+                                wrap: word-wrap;
+                                overflow: elide;
+                                max-height: 60px;
+                            }
+                            Text {
+                                text: root.agent-challenger-summary == "" ? "No challenger staged yet." : root.agent-challenger-summary;
+                                color: Palette.text-muted;
+                                font-family: Palette.font-body;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        SmithButton {
+                            text: root.agent-evolve-state == "running" ? "Evolving…" : "Evolve now";
+                            kind: "secondary";
+                            enabled: root.agent-evolve-state != "running" && !root.agent-loading && !root.agent-saving && !root.agent-deleting;
+                            clicked => { root.evolve-agent-now(); }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                    // Color carried from Rust (`agent-evolve-is-error`) rather than
+                    // sniffed out of the message text in .slint.
+                    if root.agent-evolve-state != "" && root.agent-evolve-state != "running": Text {
+                        text: root.agent-evolve-state;
+                        color: root.agent-evolve-is-error ? Palette.red : Palette.text-body;
+                        font-family: Palette.font-body;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+
+                    Text {
+                        text: "Lessons (" + root.agent-lessons.length + ")";
+                        color: Palette.text-muted;
+                        font-family: Palette.font-body;
+                        font-size: 11px;
+                        font-weight: 600;
+                    }
+                    if root.agent-lessons.length == 0: Text {
+                        text: "None distilled yet.";
+                        color: Palette.text-subtle;
+                        font-family: Palette.font-body;
+                        font-size: 12px;
+                    }
+                    for l in root.agent-lessons: Rectangle {
+                        border-radius: 4px;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        background: Palette.sunken;
+                        height: lesson-lay.preferred-height + 14px;
+                        lesson-lay := VerticalLayout {
+                            x: 10px;
+                            y: 7px;
+                            width: parent.width - 20px;
+                            spacing: 2px;
+                            Text {
+                                text: (l.polarity == "guiding" ? "✓ " : "⚠ ") + l.trigger;
+                                color: l.polarity == "guiding" ? Palette.text-body : Palette.accent;
+                                font-family: Palette.font-body;
+                                font-size: 12.5px;
+                                font-weight: 600;
+                                wrap: word-wrap;
+                            }
+                            Text {
+                                text: l.corrected-behavior;
+                                color: Palette.text-muted;
+                                font-family: Palette.font-body;
+                                font-size: 11.5px;
+                                wrap: word-wrap;
+                            }
+                            Text {
+                                text: l.usage;
+                                color: Palette.text-subtle;
+                                font-family: Palette.font-mono;
+                                font-size: 10.5px;
+                            }
+                        }
+                    }
+
+                    Text {
+                        text: "Recent signals (" + root.agent-signals.length + ")";
+                        color: Palette.text-muted;
+                        font-family: Palette.font-body;
+                        font-size: 11px;
+                        font-weight: 600;
+                    }
+                    if root.agent-signals.length == 0: Text {
+                        text: "No feedback captured yet — 👍/👎/edit/retry on this agent's replies will show up here.";
+                        color: Palette.text-subtle;
+                        font-family: Palette.font-body;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    for s in root.agent-signals: HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: s.kind;
+                            color: Palette.text-body;
+                            font-family: Palette.font-body;
+                            font-size: 12px;
+                            min-width: 90px;
+                        }
+                        Text {
+                            text: s.when;
+                            color: Palette.text-subtle;
+                            font-family: Palette.font-mono;
+                            font-size: 11px;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+                }
+            }
+        }
+    }
+}

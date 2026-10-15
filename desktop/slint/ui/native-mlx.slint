@@ -1,0 +1,48 @@
+import { LineEdit, ComboBox, TextEdit } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck } from "theme.slint";
+export global NativeMlx {
+    in property <bool> available; in property <bool> busy; in property <bool> can-load; in property <bool> can-unload; in property <bool> can-cancel; in property <bool> raw-ready;
+    in-out property <bool> advanced;
+    in-out property <string> worker; in-out property <string> directory; in-out property <string> model-id; in-out property <string> source: "User-selected local worker"; in-out property <string> source-revision: "local-selection";
+    in-out property <int> capability-index;
+    in-out property <int> thinking-index;in property <bool> thinking-supported;
+    in-out property <string> max-tokens: "128"; in-out property <string> temperature: "0.6"; in-out property <string> top-p: "0.9"; in-out property <string> seed;
+    in-out property <bool> confirmed;
+    in property <string> detail;
+    in property <string> review; in property <string> status; in property <string> result;
+    in-out property <string> prompt;
+    callback refresh();callback pick-worker();callback pick-directory();callback prepare();callback load();callback cancel();callback unload();callback complete();
+}
+component Label inherits Text {font-family:Palette.font-body;font-size:12px;color:Palette.text-body;wrap:word-wrap;}
+export component NativeMlxControls inherits VerticalLayout {
+    spacing:10px;
+    Label {text:"Apple MLX · choose a local safetensors model package.";}
+    SmithButton {text:"Refresh MLX settings";enabled:!NativeMlx.busy;clicked=>{NativeMlx.refresh();}}
+    SmithCheck {text:"Advanced worker and review details";checked<=>NativeMlx.advanced;}
+    if NativeMlx.advanced: HorizontalLayout {spacing:8px;LineEdit{placeholder-text:"Native MLX worker path";text<=>NativeMlx.worker;}SmithButton{text:"Choose worker…";enabled:!NativeMlx.busy;clicked=>{NativeMlx.pick-worker();}}}
+    HorizontalLayout {spacing:8px;LineEdit{placeholder-text:"Existing safetensors package directory";text<=>NativeMlx.directory;}SmithButton{text:"Choose package…";enabled:!NativeMlx.busy;clicked=>{NativeMlx.pick-directory();}}}
+    LineEdit {placeholder-text:"Local model label";text<=>NativeMlx.model-id;}
+    if NativeMlx.advanced: HorizontalLayout {spacing:8px;LineEdit{placeholder-text:"Worker provenance";text<=>NativeMlx.source;}LineEdit{placeholder-text:"Exact source revision";text<=>NativeMlx.source-revision;}}
+    ComboBox {model:["Chat · requires admitted template","Raw completion · separate scratch output"];current-index<=>NativeMlx.capability-index;}
+    HorizontalLayout {spacing:8px;
+        VerticalLayout{spacing:4px;Label{text:"Maximum output tokens";}LineEdit{placeholder-text:"1–2048";text<=>NativeMlx.max-tokens;}}
+        VerticalLayout{spacing:4px;Label{text:"Temperature";}LineEdit{placeholder-text:"0–2";text<=>NativeMlx.temperature;}}
+        VerticalLayout{spacing:4px;Label{text:"Top-p";}LineEdit{placeholder-text:">0–1";text<=>NativeMlx.top-p;}}
+        VerticalLayout{spacing:4px;Label{text:"Seed (optional)";}LineEdit{placeholder-text:"Random when empty";text<=>NativeMlx.seed;}}
+    }
+    Label {text:"Sampling applies to this MLX model.";}
+    Label {text:"Thinking mode";}
+    ComboBox {model:["Model default","Disabled · supported Qwen template only"];current-index<=>NativeMlx.thinking-index;enabled:NativeMlx.thinking-supported&&!NativeMlx.busy;}
+    if !NativeMlx.thinking-supported:Label{text:"This backend retains the model's default thinking mode.";}
+    SmithButton {text:"Inspect selected MLX files";enabled:NativeMlx.available&&!NativeMlx.busy;clicked=>{NativeMlx.prepare();}}
+    if NativeMlx.review!="": VerticalLayout {spacing:8px;
+    Text {text:NativeMlx.review;font-family:Palette.font-mono;font-size:11px;color:Palette.text-body;wrap:word-wrap;}
+    if NativeMlx.advanced: Text {text:NativeMlx.detail;font-family:Palette.font-mono;font-size:11px;color:Palette.text-body;wrap:word-wrap;}
+    SmithCheck {text:"Approve this exact MLX load plan";checked<=>NativeMlx.confirmed;enabled:NativeMlx.can-load&&!NativeMlx.busy;}
+    SmithButton {text:"Load reviewed MLX model";kind:"primary";enabled:NativeMlx.can-load&&NativeMlx.confirmed&&!NativeMlx.busy;clicked=>{NativeMlx.load();}}
+    }
+    Label {text:NativeMlx.status;}
+    HorizontalLayout {spacing:8px;SmithButton{text:"Cancel MLX operation";enabled:NativeMlx.can-cancel;clicked=>{NativeMlx.cancel();}}SmithButton{text:"Unload owned MLX worker";enabled:NativeMlx.can-unload&&!NativeMlx.busy;clicked=>{NativeMlx.unload();}}}
+    if NativeMlx.raw-ready: VerticalLayout {spacing:8px;Label{text:"Raw completion is temporary scratch output. It does not create a chat or persist the prompt or answer.";}TextEdit{text<=>NativeMlx.prompt;height:100px;}SmithButton{text:"Run this raw prompt";enabled:!NativeMlx.busy&&NativeMlx.prompt!="";clicked=>{NativeMlx.complete();}}}
+    if NativeMlx.result!="": TextEdit {text:NativeMlx.result;read-only:true;height:180px;}
+}

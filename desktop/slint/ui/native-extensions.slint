@@ -1,0 +1,98 @@
+import { LineEdit, TextEdit, ScrollView, ComboBox } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck } from "theme.slint";
+export struct ExtensionItem { id:string,name:string,detail:string,enabled:bool }
+export global NativeExtensions {
+    in property <bool> busy;
+    in property <string> status;
+    in property <string> editing-kind;
+    in property <bool> deleted;
+    in property <[ExtensionItem]> plugins;
+    in-out property <bool> show-trash;
+    in-out property <bool> details;
+    in-out property <string> plugin-name;
+    in-out property <string> plugin-description;
+    in-out property <string> plugin-instructions;
+    in-out property <string> plugin-manifest-id;
+    in-out property <string> plugin-version;
+    in-out property <string> plugin-authors;
+    in-out property <string> plugin-tools;
+    in-out property <string> plugin-homepage;
+    in-out property <string> plugin-license;
+    in-out property <string> plugin-instructions-file;
+    in-out property <bool> plugin-enabled:true;
+    in-out property <bool> import-open;
+    in-out property <bool> import-details;
+    in-out property <string> import-directory;
+    in-out property <int> original-kind;
+    in property <[string]> original-rows;
+    in property <bool> original-next;
+    in property <string> original-status;
+    in property <bool> import-ready;
+    in property <bool> import-uncertain;
+    in property <string> import-summary;
+    in property <string> import-instructions;
+    in property <string> import-evidence;
+    in property <string> purge-name;
+    in-out property <bool> permanent;
+    callback choose-plugin();callback review-plugin();callback browse-original();callback next-original();callback review-original(int);callback import-reviewed();callback dismiss-import();callback purge();
+    callback refresh();callback new(string);callback edit(string);callback save-plugin();callback toggle-plugin(string);callback remove-plugin(string);
+}
+component Label inherits Text { font-family:Palette.font-body;font-size:12px;color:Palette.text-body;wrap:word-wrap; }
+export component NativeExtensionsToolbar inherits VerticalLayout {
+    spacing:8px;
+    HorizontalLayout{spacing:8px;
+        SmithButton{text:"Refresh";enabled:!NativeExtensions.busy;clicked=>{NativeExtensions.refresh();}}
+        SmithCheck{text:"Trash";checked<=>NativeExtensions.show-trash;enabled:!NativeExtensions.busy;}
+        SmithCheck{text:"Import";checked<=>NativeExtensions.import-open;}
+        Label{text:NativeExtensions.status;vertical-alignment:center;horizontal-stretch:1;}
+    }
+    if NativeExtensions.import-open:VerticalLayout{spacing:8px;
+        Label{text:"Import a selected plugin directory or a record retained by Data → Import. Imported instructions start disabled.";}
+        HorizontalLayout{spacing:8px;LineEdit{text<=>NativeExtensions.import-directory;placeholder-text:"Plugin directory";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready;}SmithButton{text:"Choose…";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready;clicked=>{NativeExtensions.choose-plugin();}}SmithButton{text:"Review plugin";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready&&NativeExtensions.import-directory!="";clicked=>{NativeExtensions.review-plugin();}}}
+        HorizontalLayout{spacing:8px;ComboBox{model:["Original skills","Original methods","Original recipes"];current-index<=>NativeExtensions.original-kind;enabled:!NativeExtensions.busy;}SmithButton{text:"Browse originals";enabled:!NativeExtensions.busy;clicked=>{NativeExtensions.browse-original();}}SmithButton{text:"Next";enabled:!NativeExtensions.busy&&NativeExtensions.original-next;clicked=>{NativeExtensions.next-original();}}Label{text:NativeExtensions.original-status;horizontal-stretch:1;}}
+        for name[index] in NativeExtensions.original-rows:HorizontalLayout{spacing:8px;Label{text:name;horizontal-stretch:1;}SmithButton{text:"Review";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready;clicked=>{NativeExtensions.review-original(index);}}}
+        if NativeExtensions.import-ready:VerticalLayout{spacing:6px;
+            Label{text:NativeExtensions.import-summary;}
+            if NativeExtensions.import-instructions!="":Rectangle{height:120px;border-width:1px;border-color:Palette.border;border-radius:Palette.radius;TextEdit{x:3px;y:3px;width:parent.width - 6px;height:parent.height - 6px;text:NativeExtensions.import-instructions;read-only:true;wrap:word-wrap;}}
+            SmithCheck{text:"Source details";checked<=>NativeExtensions.import-details;}
+            if NativeExtensions.import-details:Label{text:NativeExtensions.import-evidence;font-family:Palette.font-mono;}
+            if NativeExtensions.import-uncertain:Label{text:"The reply was not confirmed. Retry uses the same request; it cannot create a second copy.";color:Palette.warning-text;}
+            HorizontalLayout{spacing:8px;SmithButton{text:NativeExtensions.import-uncertain?"Retry same import":"Import disabled";kind:"primary";enabled:!NativeExtensions.busy;clicked=>{NativeExtensions.import-reviewed();}}SmithButton{text:"Dismiss review";enabled:!NativeExtensions.busy;clicked=>{NativeExtensions.dismiss-import();}}Rectangle{horizontal-stretch:1;}}
+        }
+    }
+    if NativeExtensions.purge-name!="":VerticalLayout{spacing:6px;
+        Label{text:"Permanently remove “"+NativeExtensions.purge-name+"”? Captured task history stays available. This definition cannot be restored.";color:Palette.error-text;}
+        HorizontalLayout{spacing:8px;SmithCheck{text:"Permanently remove this definition";checked<=>NativeExtensions.permanent;enabled:!NativeExtensions.busy;}SmithButton{text:"Permanently remove";enabled:NativeExtensions.permanent&&!NativeExtensions.busy;clicked=>{NativeExtensions.purge();}}}
+    }
+}
+export component NativePluginExtensions inherits VerticalLayout {
+    spacing:12px;
+    Label{text:"Plugin instructions are captured on later tasks when enabled. Declared tool names never grant tools.";}
+    HorizontalLayout{spacing:8px;SmithButton{text:"New plugin";enabled:!NativeExtensions.busy;clicked=>{NativeExtensions.new("plugin");}}Rectangle{horizontal-stretch:1;}}
+    Label{text:"Name";}
+    LineEdit{text<=>NativeExtensions.plugin-name;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}
+    Label{text:"Manifest ID";}
+    LineEdit{text<=>NativeExtensions.plugin-manifest-id;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}
+    Label{text:"Description";}
+    LineEdit{text<=>NativeExtensions.plugin-description;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}
+    Label{text:"Instructions";}
+    Rectangle{height:160px;border-width:1px;border-color:Palette.border;border-radius:Palette.radius;background:Palette.raised;TextEdit{x:3px;y:3px;width:parent.width - 6px;height:parent.height - 6px;text<=>NativeExtensions.plugin-instructions;wrap:word-wrap;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}}
+    SmithCheck{text:"Advanced metadata";checked<=>NativeExtensions.details;}
+    if NativeExtensions.details:VerticalLayout{spacing:6px;
+        Label{text:"Version";}LineEdit{text<=>NativeExtensions.plugin-version;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}
+        Label{text:"Authors (one per line)";}LineEdit{text<=>NativeExtensions.plugin-authors;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}
+        Label{text:"Declared tool names (one per line; does not grant tools)";}LineEdit{text<=>NativeExtensions.plugin-tools;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}
+        Label{text:"Homepage (stored text)";}LineEdit{text<=>NativeExtensions.plugin-homepage;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}
+        Label{text:"License metadata";}LineEdit{text<=>NativeExtensions.plugin-license;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}
+        Label{text:"Instruction filename (metadata only; instructions above must be supplied)";}LineEdit{text<=>NativeExtensions.plugin-instructions-file;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}
+    }
+    HorizontalLayout{spacing:8px;SmithCheck{text:"Enabled";checked<=>NativeExtensions.plugin-enabled;enabled:!NativeExtensions.busy&&!NativeExtensions.deleted;}Rectangle{horizontal-stretch:1;}SmithButton{text:NativeExtensions.editing-kind=="plugin"?"Save plugin":"Add plugin";kind:"primary";enabled:!NativeExtensions.busy&&!NativeExtensions.deleted&&NativeExtensions.plugin-name!=""&&NativeExtensions.plugin-manifest-id!="";clicked=>{NativeExtensions.save-plugin();}}}
+    for row in NativeExtensions.plugins:HorizontalLayout{spacing:8px;
+        SmithCheck{checked:row.enabled;enabled:!NativeExtensions.busy&&!NativeExtensions.show-trash;toggled=>{NativeExtensions.toggle-plugin(row.id);}}
+        VerticalLayout{spacing:3px;Label{text:row.name;}Label{text:row.detail;}}
+        Rectangle{horizontal-stretch:1;}
+        SmithButton{text:"Edit";enabled:!NativeExtensions.busy&&!NativeExtensions.show-trash;clicked=>{NativeExtensions.edit(row.id);}}
+        if NativeExtensions.show-trash:SmithButton{text:"Permanent…";enabled:!NativeExtensions.busy;clicked=>{NativeExtensions.edit(row.id);}}
+        SmithButton{text:NativeExtensions.show-trash?"Restore":"Trash";enabled:!NativeExtensions.busy;clicked=>{NativeExtensions.remove-plugin(row.id);}}
+    }
+}

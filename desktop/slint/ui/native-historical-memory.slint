@@ -1,0 +1,42 @@
+import { LineEdit, ComboBox, TextEdit } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck } from "theme.slint";
+export struct HistoricalItem { id:string,summary:string,metadata:string }
+export global NativeHistorical {
+    in-out property <int> mode:0;
+    in-out property <int> scope:0;
+    in-out property <string> agent;
+    in-out property <string> session;
+    in-out property <string> query;
+    in-out property <bool> trash;
+    in-out property <bool> exact-details;
+    in property <bool> busy;
+    in property <bool> can-next;
+    in property <bool> can-undo;
+    in property <[HistoricalItem]> rows;
+    in property <string> status;
+    in property <string> notices;
+    in property <string> details;
+    callback search();callback next();callback inspect(string);callback remove(string);callback undo();callback scope-changed();
+}
+component Label inherits Text{font-family:Palette.font-body;font-size:12px;color:Palette.text-body;wrap:word-wrap;}
+export component NativeMemoryTabs inherits HorizontalLayout{
+    spacing:8px;padding-top:14px;padding-left:24px;padding-right:24px;
+    SmithButton{text:"Facts";kind:NativeHistorical.mode==0?"primary":"secondary";clicked=>{NativeHistorical.mode=0;NativeHistorical.scope-changed();}}
+    SmithButton{text:"Imported episodes";kind:NativeHistorical.mode==1?"primary":"secondary";clicked=>{NativeHistorical.mode=1;NativeHistorical.scope-changed();}}
+    SmithButton{text:"Imported lessons";kind:NativeHistorical.mode==2?"primary":"secondary";clicked=>{NativeHistorical.mode=2;NativeHistorical.scope-changed();}}
+}
+export component NativeHistoricalControls inherits VerticalLayout{
+    padding:24px;spacing:12px;alignment:start;
+    Text{text:NativeHistorical.mode==1?"Imported episodes":"Imported lessons";font-family:Palette.font-display;font-size:22px;font-weight:600;color:Palette.text-strong;}
+    Label{text:"Historical records from your imported original copy. Browsing keeps them separate from active facts and recall.";}
+    HorizontalLayout{spacing:8px;ComboBox{model:["All original agents","Original global scope","One original agent"];current-index<=>NativeHistorical.scope;enabled:!NativeHistorical.busy;selected=>{NativeHistorical.scope-changed();}}if NativeHistorical.scope==2:LineEdit{text<=>NativeHistorical.agent;placeholder-text:"Original agent ID";enabled:!NativeHistorical.busy;edited=>{NativeHistorical.scope-changed();}}}
+    HorizontalLayout{spacing:8px;LineEdit{text<=>NativeHistorical.session;placeholder-text:"Original session ID (optional)";enabled:!NativeHistorical.busy;edited=>{NativeHistorical.scope-changed();}}SmithCheck{text:"Trash";checked<=>NativeHistorical.trash;enabled:!NativeHistorical.busy;toggled=>{NativeHistorical.scope-changed();}}}
+    HorizontalLayout{spacing:8px;LineEdit{text<=>NativeHistorical.query;placeholder-text:NativeHistorical.mode==1?"Literal summary search":"Literal trigger search";enabled:!NativeHistorical.busy;edited=>{NativeHistorical.scope-changed();}accepted=>{NativeHistorical.search();}}SmithButton{text:"Browse / Search";kind:"primary";enabled:!NativeHistorical.busy;clicked=>{NativeHistorical.search();}}}
+    Label{text:NativeHistorical.status;}
+    if NativeHistorical.notices!="":Label{text:NativeHistorical.notices;color:Palette.warning-text;}
+    for row in NativeHistorical.rows:Rectangle{border-color:Palette.border;border-width:1px;border-radius:Palette.radius;background:Palette.raised;
+        HorizontalLayout{padding:12px;spacing:12px;VerticalLayout{horizontal-stretch:1;min-width:0px;spacing:5px;Label{text:row.summary;horizontal-stretch:1;min-width:0px;}Label{text:row.metadata;horizontal-stretch:1;min-width:0px;}}VerticalLayout{width:114px;horizontal-stretch:0;spacing:6px;SmithButton{text:"Details";enabled:!NativeHistorical.busy;clicked=>{NativeHistorical.inspect(row.id);}}SmithButton{text:NativeHistorical.trash?"Restore":"Trash";enabled:!NativeHistorical.busy;clicked=>{NativeHistorical.remove(row.id);}}}}
+    }
+    HorizontalLayout{spacing:8px;if NativeHistorical.can-next:SmithButton{text:"Continue scan";enabled:!NativeHistorical.busy;clicked=>{NativeHistorical.next();}}if NativeHistorical.can-undo:SmithButton{text:"Restore last trashed record";enabled:!NativeHistorical.busy;clicked=>{NativeHistorical.undo();}}}
+    if NativeHistorical.details!="":VerticalLayout{spacing:8px;SmithCheck{text:"Exact original details";checked<=>NativeHistorical.exact-details;}if NativeHistorical.exact-details:TextEdit{text:NativeHistorical.details;read-only:true;min-height:220px;wrap:word-wrap;}}
+}

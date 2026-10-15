@@ -1,0 +1,243 @@
+// Model browser window — the Hugging Face / local model picker shown from
+// Settings → Models and the chat rail. Framed in the Lazarev Cloud DS.
+//
+// Lists models with family / size / quantization metadata, an "Installed" badge
+// for local weights, and a download or delete affordance per row.
+
+import { LineEdit, ListView } from "std-widgets.slint";
+import { Palette, SmithButton, EmptyState, Banner, StatusPill, ConfirmButton } from "theme.slint";
+import { Icons } from "icons.slint";
+
+// One row in the model browser. Mirrors `smith_core::domain::ModelInfo` (the
+// Rust bridge flattens the option fields into display strings).
+export struct ModelItem {
+    id: string,
+    name: string,
+    family: string,
+    parameter-size: string,
+    quantization: string,
+    size: string,
+    provider: string,
+    // "GGUF" | "ONNX" (P4 "Models view clarity" — a format badge; derived
+    // from `provider` by `bridge::model_format_label`, a closed match for
+    // this surface, not a UI-side guess).
+    format: string,
+    downloaded: bool,
+    // Currently resident/serving in a local inference backend right now —
+    // distinct from "default" (the *configured* model), P4 "add a
+    // currently loaded/running indicator distinct from default".
+    loaded: bool,
+    // Live download state (driven by a polling timer on the Rust side).
+    downloading: bool,
+    progress: float,    // 0.0..=1.0
+    dl-error: bool,
+    host-hint: string,
+    dl-status: string,  // e.g. "1.2 / 2.4 GB"
+}
+
+// An embeddable model-browser panel (a view inside the main window).
+export component ModelsView inherits Rectangle {
+    background: Palette.page;
+
+    // Visible (filtered) rows.
+    in property <[ModelItem]> models;
+    // Unfiltered master set retained for client-side search; the Rust bridge
+    // owns it so no `!Send` state has to cross the Tokio runtime boundary.
+    in-out property <[ModelItem]> all-models;
+    in-out property <string> search-text;
+    // The id of the model currently configured as the chat default (so installed
+    // rows can show a "Default" marker / a "Set default" action).
+    in property <string> default-model;
+    // Whether `default-model` is configured but doesn't actually resolve
+    // right now (deleted, or the models dir changed) — distinct from the
+    // per-row "Installed"/"Default" markers, which only ever describe rows
+    // that ARE in `models` today; this catches the case where the
+    // *configured* choice has silently fallen out of that set entirely.
+    in property <bool> default-model-missing: false;
+    // A non-empty query triggers a live HuggingFace GGUF search (a real
+    // network round-trip, unlike the empty-query local filter) — this drives
+    // a busy indicator so the search bar isn't a dead end while it's in flight.
+    in property <bool> searching: false;
+    in property <string> search-error: "";
+
+    // Fired when the user edits the search box (filtered on the Rust side).
+    callback search(string);
+    // Fired with the model id of the row's primary action.
+    callback download(string);
+    callback cancel-download(string);
+    callback delete(string);
+    callback refresh();
+    // Make this installed model the chat default.
+    callback set-default(string);
+
+    VerticalLayout {
+        width: 100%;
+        height: 100%;
+        padding: 22px;
+        spacing: 14px;
+        HorizontalLayout {
+            spacing: 12px;
+            VerticalLayout {
+                spacing: 4px;
+                Text {
+                    text: "Models";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 22px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: "Installed models and recommendations for this PC";
+                    color: Palette.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            SmithButton { text: "Refresh"; kind: "secondary"; width: 108px; clicked => { root.refresh(); } }
+        }
+        if root.default-model-missing: Banner {
+            kind: "warning";
+            text: "Your default model (" + root.default-model + ") is unavailable. Download it again or choose an installed model below.";
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            LineEdit {
+                placeholder-text: "Search installed models and Hugging Face...";
+                text <=> root.search-text;
+                horizontal-stretch: 1;
+                edited(t) => { root.search(t); }
+                accessible-label: "Search models";
+            }
+            if root.search-text != "": SmithButton {
+                text: "Clear"; kind: "ghost"; width: 72px;
+                clicked => { root.search-text = ""; root.search(""); }
+            }
+        }
+        if root.searching: Text {
+            text: "Searching Hugging Face... Local matches appear immediately.";
+            color: Palette.text-muted;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        if root.search-error != "": VerticalLayout {
+            spacing: 8px;
+            Banner { kind: "warning"; text: root.search-error; }
+            HorizontalLayout {
+                SmithButton { text: "Retry search"; kind: "secondary"; width: 120px; clicked => { root.search(root.search-text); } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+        }
+        if root.search-text != "" && !root.searching && root.search-error == "": Text {
+            text: "Local matches and downloadable GGUF models from Hugging Face";
+            color: Palette.text-muted;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        if root.models.length == 0: EmptyState {
+            vertical-stretch: 1;
+            icon: Icons.search;
+            title: root.searching ? "Searching models..." : (root.search-error != "" ? "Online search unavailable" : "No matching models");
+            message: root.searching ? "Checking the publisher catalog." : (root.search-error != "" ? "Retry the search or clear it to browse recommendations." : "Try a different name, or clear the search to see this PC's recommendations.");
+        }
+        if root.models.length > 0: ListView {
+            vertical-stretch: 1;
+            for item in root.models: Rectangle {
+                height: card.preferred-height + 10px;
+                card := VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text {
+                            text: item.name;
+                            horizontal-stretch: 1;
+                            min-width: 0px;
+                            overflow: elide;
+                            color: Palette.text-strong;
+                            font-family: Palette.font-body;
+                            font-size: 15px;
+                            font-weight: 600;
+                            vertical-alignment: center;
+                        }
+                        StatusPill { text: item.format; horizontal-stretch: 0; }
+                        if item.downloading: StatusPill { text: "Downloading"; horizontal-stretch: 0; show-dot: true; dot-color: Palette.accent; }
+                        if item.downloaded && !item.downloading: StatusPill { text: "Installed"; horizontal-stretch: 0; show-dot: true; dot-color: Palette.success; }
+                        if item.loaded: StatusPill { text: "Running"; horizontal-stretch: 0; show-dot: true; dot-color: Palette.accent; }
+                    }
+                    Text {
+                        text: (item.family != "" ? item.family + " · " : "")
+                            + (item.parameter-size != "" ? item.parameter-size + " · " : "")
+                            + (item.quantization != "" ? item.quantization + " · " : "") + item.size;
+                        color: Palette.text-muted;
+                        font-family: Palette.font-mono;
+                        font-size: 11px;
+                        wrap: word-wrap;
+                    }
+                    if item.host-hint != "": Text {
+                        text: item.host-hint;
+                        color: Palette.text-body;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    if item.dl-error: Banner { kind: "warning"; text: item.dl-status; }
+                    if item.downloading: VerticalLayout {
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            Text {
+                                text: item.dl-status;
+                                color: Palette.text-body;
+                                font-family: Palette.font-mono;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            SmithButton { text: "Cancel"; kind: "secondary"; width: 100px; clicked => { root.cancel-download(item.id); } }
+                        }
+                        Rectangle {
+                            height: 6px;
+                            border-radius: 3px;
+                            background: Palette.border;
+                            Rectangle {
+                                x: 0;
+                                width: parent.width * clamp(item.progress, 0.0, 1.0);
+                                height: parent.height;
+                                border-radius: 3px;
+                                background: Palette.accent;
+                                animate width { duration: 200ms; }
+                            }
+                        }
+                    }
+                    if !item.downloading: HorizontalLayout {
+                        spacing: 8px;
+                        if item.downloaded && item.id == root.default-model: Text {
+                            text: "Default for chat";
+                            color: Palette.accent;
+                            font-size: 12px;
+                            vertical-alignment: center;
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        if item.downloaded && item.id != root.default-model: SmithButton {
+                            text: "Use for chat"; kind: "primary"; width: 120px; clicked => { root.set-default(item.id); }
+                        }
+                        if item.downloaded: ConfirmButton {
+                            label: "Delete files"; reset-key: item.id; confirm-text: "Remove local files?";
+                            confirmed => { root.delete(item.id); }
+                        }
+                        if !item.downloaded: SmithButton {
+                            text: item.dl-error ? "Retry download" : "Download";
+                            kind: "primary"; width: 140px;
+                            clicked => { root.download(item.id); }
+                        }
+                    }
+                }
+                background: Palette.raised;
+                border-radius: Palette.radius;
+                border-width: 1px;
+                border-color: Palette.border;
+            }
+        }
+    }
+}

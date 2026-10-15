@@ -1,0 +1,386 @@
+// Artifacts view: persisted chat drops (transcripts, extracted document
+// text), registered-folder catalogue entries, and (later) generated content.
+// Modeled closely on the Transcribe view's own Artifacts list — an empty
+// state, a list with open/delete actions, plus a register-folder button.
+// Backed by smith-ui/src/{artifact_capture,artifact_open,bridge}.rs.
+
+import { ListView, TextEdit, LineEdit } from "std-widgets.slint";
+import { Palette, SmithButton, EmptyState } from "theme.slint";
+import { Icon, Icons } from "icons.slint";
+
+// One artifact row (see `bridge::artifact_to_item`).
+export struct ArtifactItem {
+    id: string,
+    title: string,
+    kind: string,
+    subtitle: string,
+    // Whether "Open" can show a decrypted text preview for this kind
+    // (Transcript/Document). DroppedFile is list-and-delete only — see
+    // `artifact_open.rs`'s doc comment for exactly why.
+    text-viewable: bool,
+    // Whether "Open" shows a decoded image preview (Image/Generated kinds —
+    // P2 "image preview in the Artifacts viewer").
+    is-image: bool,
+}
+
+// Compact icon-triggered delete-confirm: the trash icon arms on the first
+// click (swapping to a "Delete?" + check/x pair) instead of deleting
+// instantly. `item-id` should be the row's stable identity — the `changed`
+// callback disarms a stale confirm if the list reorders and this delegate
+// gets recycled for a different row (mirrors `ConfirmButton` in theme.slint,
+// kept file-local here since it needs the icon glyphs artifacts.slint uses).
+component ConfirmDeleteIcon inherits HorizontalLayout {
+    in property <string> item-id;
+    // Blocks the whole delete affordance (arm, confirm, and cancel) — pass
+    // `!viewer-opening` from the row so a delete can't race a still-in-flight
+    // open of the same row (the row's own open TouchArea is disabled for the
+    // same reason; this was previously a sibling, not a child, of that
+    // TouchArea, so it wasn't covered by that guard at all).
+    in property <bool> enabled: true;
+    property <bool> confirming: false;
+    callback confirmed();
+    changed item-id => { root.confirming = false; }
+
+    spacing: 4px;
+    if !root.confirming: Rectangle {
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        background: del.has-hover ? Palette.hover : transparent;
+        Icon { source: Icons.trash; size: 13px; stroke: Palette.text-subtle; }
+        del := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: root.enabled ? pointer : default;
+            clicked => { root.confirming = true; }
+        }
+    }
+    if root.confirming: VerticalLayout {
+        alignment: center;
+        Text {
+            text: "Delete?";
+            color: Palette.text-strong;
+            font-family: Palette.font-body;
+            font-size: 11px;
+        }
+    }
+    if root.confirming: Rectangle {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        background: yes.has-hover ? Palette.hover : transparent;
+        Icon { source: Icons.check; size: 12px; stroke: Palette.accent; }
+        yes := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: root.enabled ? pointer : default;
+            clicked => {
+                root.confirming = false;
+                root.confirmed();
+            }
+        }
+    }
+    if root.confirming: Rectangle {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        background: no.has-hover ? Palette.hover : transparent;
+        Icon { source: Icons.x; size: 12px; stroke: Palette.text-subtle; }
+        no := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.confirming = false; }
+        }
+    }
+}
+
+export component ArtifactsView inherits Rectangle {
+    background: Palette.page;
+
+    in property <[ArtifactItem]> artifacts;
+    in-out property <string> status: "";
+    in-out property <bool> viewer-open: false;
+    in-out property <string> viewer-title: "";
+    in-out property <string> viewer-text: "";
+    // Image preview (P2): when the open artifact is an image, `viewer-image`
+    // holds the decoded pixel data instead of `viewer-text`.
+    in-out property <bool> viewer-is-image: false;
+    in-out property <image> viewer-image;
+    in-out property <string> viewer-artifact-id: "";
+    // Busy while an edit/variation/upscale request is running — disables the
+    // action row so a second click can't queue a duplicate generation.
+    in-out property <bool> viewer-busy: false;
+    // Busy while "Open" is reading + decrypting (and, for images, decoding)
+    // an artifact off disk — previously a row click gave zero feedback until
+    // the viewer just appeared, so a slow disk or a large artifact looked
+    // like the click hadn't registered at all.
+    in-out property <bool> viewer-opening: false;
+    property <string> edit-prompt: "";
+    // Inline rename (user-initiated only — see `Database::rename_artifact`'s
+    // doc comment): "" = no row is being renamed; otherwise the id of the
+    // row whose title is currently an editable LineEdit.
+    in-out property <string> renaming-artifact-id: "";
+    in-out property <string> rename-text: "";
+
+    callback register-folder();
+    callback open-artifact(string);
+    callback delete-artifact(string);
+    callback rename-artifact(string, string);
+    callback close-viewer();
+    // Image actions (P2 "expose edit/variation/upscale as actions on an
+    // image artifact"): artifact id (+ prompt for edit).
+    callback edit-image(string, string);
+    callback variation-image(string);
+    callback upscale-image(string);
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 14px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                spacing: 4px;
+                Text {
+                    text: "Artifacts";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 22px;
+                    font-weight: 600;
+                }
+                Text {
+                    text: "Chat attachments, transcripts, and catalogued folders — kept encrypted at rest, browsable here.";
+                    color: Palette.text-muted;
+                    font-family: Palette.font-body;
+                    font-size: 13px;
+                    wrap: word-wrap;
+                }
+            }
+            SmithButton {
+                text: "Register folder…";
+                kind: "secondary";
+                width: 160px;
+                clicked => { root.register-folder(); }
+            }
+        }
+
+        if root.status != "": Text {
+            text: root.status;
+            color: Palette.text-muted;
+            font-family: Palette.font-body;
+            font-size: 13px;
+            wrap: word-wrap;
+        }
+
+        if root.viewer-open: Rectangle {
+            vertical-stretch: 1;
+            border-radius: Palette.radius;
+            border-width: 1px;
+            border-color: Palette.border;
+            background: Palette.raised;
+            clip: true;
+            VerticalLayout {
+                padding: 4px;
+                spacing: 4px;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-top: 4px;
+                    spacing: 8px;
+                    Text {
+                        text: root.viewer-title;
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        horizontal-stretch: 1;
+                    }
+                    Rectangle {
+                        width: 24px;
+                        height: 24px;
+                        border-radius: 4px;
+                        background: close-touch.has-hover ? Palette.hover : transparent;
+                        Icon { source: Icons.x; size: 14px; stroke: Palette.text-subtle; }
+                        close-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.close-viewer(); }
+                        }
+                    }
+                }
+                if !root.viewer-is-image: TextEdit {
+                    text: root.viewer-text;
+                    read-only: true;
+                    wrap: word-wrap;
+                    font-size: 13px;
+                }
+                if root.viewer-is-image: VerticalLayout {
+                    vertical-stretch: 1;
+                    padding: 8px;
+                    spacing: 10px;
+                    alignment: start;
+                    Rectangle {
+                        height: 360px;
+                        Image {
+                            source: root.viewer-image;
+                            height: 360px;
+                            image-fit: contain;
+                        }
+                    }
+                    if root.status != "": Text {
+                        text: root.status;
+                        color: Palette.text-muted;
+                        font-family: Palette.font-body;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit {
+                            horizontal-stretch: 1;
+                            placeholder-text: "Describe the edit…";
+                            text <=> root.edit-prompt;
+                            enabled: !root.viewer-busy;
+                        }
+                        SmithButton {
+                            text: "Edit";
+                            kind: "secondary";
+                            width: 90px;
+                            enabled: !root.viewer-busy && root.edit-prompt != "";
+                            clicked => { root.edit-image(root.viewer-artifact-id, root.edit-prompt); }
+                        }
+                        SmithButton {
+                            text: "Variation";
+                            kind: "secondary";
+                            width: 100px;
+                            enabled: !root.viewer-busy;
+                            clicked => { root.variation-image(root.viewer-artifact-id); }
+                        }
+                        SmithButton {
+                            text: "Upscale";
+                            kind: "secondary";
+                            width: 100px;
+                            enabled: !root.viewer-busy;
+                            clicked => { root.upscale-image(root.viewer-artifact-id); }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.artifacts.length == 0: EmptyState {
+            vertical-stretch: 1;
+            icon: Icons.folder;
+            title: "No artifacts yet";
+            message: "Attach a file in chat, or register a folder above, to see it here.";
+        }
+
+        if root.artifacts.length > 0 && !root.viewer-open: ListView {
+            vertical-stretch: 1;
+            for a in root.artifacts: Rectangle {
+                height: 56px;
+                border-radius: Palette.radius;
+                background: row.has-hover ? Palette.hover : transparent;
+                animate background { duration: 100ms; }
+                row := TouchArea {
+                    enabled: !root.viewer-opening && root.renaming-artifact-id != a.id;
+                    mouse-cursor: (a.text-viewable || a.is-image) && row.enabled ? pointer : default;
+                    clicked => {
+                        if (a.text-viewable || a.is-image) {
+                            root.open-artifact(a.id);
+                        }
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 8px;
+                    spacing: 10px;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+                        // An explicit Save (check) / Discard (x) icon pair —
+                        // not just Enter-to-commit-with-no-way-back —
+                        // mirroring `ConfirmDeleteIcon`'s own check/x below.
+                        if root.renaming-artifact-id == a.id: HorizontalLayout {
+                            spacing: 4px;
+                            rename-edit := LineEdit {
+                                text: root.rename-text;
+                                font-size: 13px;
+                                edited(t) => { root.rename-text = t; }
+                                accepted(t) => {
+                                    root.rename-artifact(a.id, t);
+                                    root.renaming-artifact-id = "";
+                                }
+                            }
+                            Rectangle {
+                                width: 22px;
+                                height: 22px;
+                                border-radius: 4px;
+                                background: save-rename-ta.has-hover ? Palette.hover : transparent;
+                                Icon { source: Icons.check; size: 13px; stroke: Palette.accent; }
+                                save-rename-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.rename-artifact(a.id, root.rename-text);
+                                        root.renaming-artifact-id = "";
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                width: 22px;
+                                height: 22px;
+                                border-radius: 4px;
+                                background: discard-rename-ta.has-hover ? Palette.hover : transparent;
+                                Icon { source: Icons.x; size: 13px; stroke: Palette.text-subtle; }
+                                discard-rename-ta := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.renaming-artifact-id = ""; }
+                                }
+                            }
+                        }
+                        if root.renaming-artifact-id != a.id: Text {
+                            text: a.title;
+                            color: Palette.text-strong;
+                            font-family: Palette.font-body;
+                            font-size: 13px;
+                            font-weight: 600;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: a.subtitle;
+                            color: Palette.text-muted;
+                            font-family: Palette.font-mono;
+                            font-size: 10px;
+                            overflow: elide;
+                        }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        HorizontalLayout {
+                            spacing: 4px;
+                            if root.renaming-artifact-id != a.id: Rectangle {
+                                width: 22px;
+                                height: 22px;
+                                border-radius: 4px;
+                                background: edit-touch.has-hover ? Palette.hover : transparent;
+                                Icon { source: Icons.edit; size: 13px; stroke: Palette.text-subtle; }
+                                edit-touch := TouchArea {
+                                    enabled: !root.viewer-opening;
+                                    mouse-cursor: pointer;
+                                    clicked => {
+                                        root.rename-text = a.title;
+                                        root.renaming-artifact-id = a.id;
+                                    }
+                                }
+                            }
+                            if root.renaming-artifact-id != a.id: ConfirmDeleteIcon {
+                                item-id: a.id;
+                                enabled: !root.viewer-opening;
+                                confirmed => { root.delete-artifact(a.id); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

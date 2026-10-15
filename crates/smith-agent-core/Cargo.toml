@@ -1,0 +1,45 @@
+[package]
+name = "smith-agent-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+description = "Explicitly granted, resumable agent tasks and confined temporary-workspace tools"
+
+[features]
+default = ["standalone-sqlite"]
+standalone-sqlite = ["dep:rusqlite"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+tempfile = "3"
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
+sha2 = "0.11"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs", "process"] }
+
+[[bin]]
+name = "smith-agent"
+path = "src/bin/smith-agent.rs"
+required-features = ["standalone-sqlite"]
+
+[[example]]
+name = "deterministic_agent"
+required-features = ["standalone-sqlite"]
+
+[[test]]
+name = "core"
+required-features = ["standalone-sqlite"]
+
+[[test]]
+name = "cli"
+required-features = ["standalone-sqlite"]
+
+[[test]]
+name = "process_restart"
+required-features = ["standalone-sqlite"]
+
+[workspace]

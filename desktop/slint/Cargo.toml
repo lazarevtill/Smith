@@ -1,0 +1,35 @@
+[package]
+name = "smith-native-bridge"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+
+[features]
+default = []
+native-ui = ["dep:slint", "dep:slint-build", "dep:i-slint-backend-testing", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+slint = { version = "=1.17.1", optional = true, default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "system-tray", "unstable-fontique-010", "accessibility"] }
+i-slint-backend-testing = { version = "=1.17.1", optional = true, features = ["renderer-software"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "=0.6.5", optional = true }
+objc2-app-kit = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSOpenPanel", "NSSavePanel", "NSPanel", "NSWindow", "NSApplication", "NSResponder", "NSView", "NSPasteboard"] }
+objc2-foundation = { version = "=0.3.2", optional = true, default-features = false, features = ["std", "NSString", "NSURL"] }
+
+[build-dependencies]
+slint-build = { version = "=1.17.1", optional = true }
+
+[[bin]]
+name = "smith-native-desktop"
+path = "src/main.rs"
+required-features = ["native-ui"]
+
+[workspace]
+
+[profile.dev.package.smith-native-bridge]
+debug = 0

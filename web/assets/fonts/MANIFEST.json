@@ -1,0 +1,38 @@
+[
+  {
+    "file": "inter-400.woff2",
+    "sha256": "8909904ab6c872eb994093482a88a28eca2cd95912d7b6fecd72103b0dc07edc",
+    "bytes": 23664,
+    "source": "canonical design source assets/fonts/inter-400.woff2"
+  },
+  {
+    "file": "inter-500.woff2",
+    "sha256": "f3779f1efccc4bdcdf9c0a02ab95bf6bd092ed09c48c08cedc725889edd1d19f",
+    "bytes": 24272,
+    "source": "canonical design source assets/fonts/inter-500.woff2"
+  },
+  {
+    "file": "inter-600.woff2",
+    "sha256": "f9a06e79cd3a2a20951c0f0e28f66dd0e6d3fda73911d640a2125c8fcb78f21a",
+    "bytes": 24452,
+    "source": "canonical design source assets/fonts/inter-600.woff2"
+  },
+  {
+    "file": "poppins-500.woff2",
+    "sha256": "cd36de204aca2d5fa263a731f7c20009b5e3d754ba1f1e03c33e93a48f3e7446",
+    "bytes": 7748,
+    "source": "canonical design source assets/fonts/poppins-500.woff2"
+  },
+  {
+    "file": "poppins-600.woff2",
+    "sha256": "f4e80d9dfd374d02989b87a27b5ed4cb78fbb177c27f1478e9a8b0afb7513149",
+    "bytes": 8000,
+    "source": "canonical design source assets/fonts/poppins-600.woff2"
+  },
+  {
+    "file": "spline-sans-mono-400.woff2",
+    "sha256": "af7360e11effa088510c57bd6c327cacd1e53ce8b0f3ef1e2445284df777e5d6",
+    "bytes": 12888,
+    "source": "canonical design source assets/fonts/spline-sans-mono-400.woff2"
+  }
+]

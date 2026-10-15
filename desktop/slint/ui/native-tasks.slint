@@ -1,0 +1,94 @@
+import { LineEdit, TextEdit, ComboBox, ScrollView } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck } from "theme.slint";
+export global NativeTasks {
+    in-out property <bool> show-setup: true;in-out property <bool> new-task: true;in-out property <bool> show-trace;
+    in property <bool> can-read;in property <bool> can-list;in property <bool> can-write;in property <bool> can-control;in property <bool> can-model;
+    in property <bool> available;in property <bool> busy;in property <[string]> workspaces;in property <[string]> tasks;
+    in property <bool> selected-workspace;in property <bool> selected-task;in property <bool> pending;in property <bool> running;in property <bool> approval;in property <bool> interrupted;in property <bool> clarification;in property <bool> terminal;in property <bool> more;
+    in-out property <string> label;in-out property <string> input;in-out property <string> path;in-out property <string> content;in-out property <string> reply;
+    in-out property <bool> read;in-out property <bool> list;in-out property <bool> write;in-out property <bool> control;
+    in property <bool> model-reviewed;in property <bool> model-active;in property <bool> model-uncertain;
+    in property <string> model-detail;in property <string> run-review;in property <string> operation;
+    in-out property <bool> use-model;in-out property <bool> run-confirmed;in-out property <string> max-steps:"1";
+    callback inspect-model();callback review-run();callback submit-run();callback inspect-operation();
+    in-out property <bool> confirmed;in-out property <bool> approval-confirmed;
+    in property <string> proposal;in property <string> workspace-detail;in property <string> detail;in property <string> call;in property <string> trace;
+    callback refresh();callback select-workspace(int);callback review-workspace();callback provision();callback create();callback select-task(int);callback start();callback list-files();callback read-file();callback write-file();callback complete();callback approve();callback deny();callback cancel();callback resume();callback clarify();callback trace-more();
+}
+component Label inherits Text {font-family:Palette.font-body;font-size:12px;color:Palette.text-body;wrap:word-wrap;}
+export component NativeTaskActions inherits VerticalLayout {
+    spacing:10px;
+    Label {text:NativeTasks.detail;}
+    if NativeTasks.pending&&!NativeTasks.model-active: SmithButton{text:"Start selected task";enabled:!NativeTasks.busy;clicked=>{NativeTasks.start();}}
+    if NativeTasks.selected-task: VerticalLayout {spacing:8px;
+        if (NativeTasks.pending||NativeTasks.running)&&NativeTasks.can-model: HorizontalLayout{spacing:8px;
+            SmithButton{text:"Review selected local model";enabled:!NativeTasks.busy&&!NativeTasks.model-active;clicked=>{NativeTasks.inspect-model();}}
+            if NativeTasks.model-reviewed: Label{text:NativeTasks.model-detail;}
+        }
+        if (NativeTasks.pending||NativeTasks.running)&&NativeTasks.can-model&&NativeTasks.model-reviewed&&!NativeTasks.model-active: HorizontalLayout{spacing:8px;
+            Label{text:"Maximum steps";}LineEdit{text<=>NativeTasks.max-steps;max-width:70px;}
+            SmithButton{text:"Review model run";enabled:!NativeTasks.busy;clicked=>{NativeTasks.review-run();}}
+        }
+        if NativeTasks.run-review!=""&&!NativeTasks.model-active: VerticalLayout{spacing:8px;
+            Label{text:NativeTasks.run-review;}SmithCheck{text:"Run this task with this model and limit";checked<=>NativeTasks.run-confirmed;}
+            SmithButton{text:"Run with model";kind:"primary";enabled:!NativeTasks.busy&&NativeTasks.run-confirmed;clicked=>{NativeTasks.submit-run();}}
+        }
+        if NativeTasks.operation!="": Label{text:NativeTasks.operation;}
+        if NativeTasks.model-uncertain: Label{text:"Submission has no confirmed result. Inspect the recorded run before taking another action.";}
+        SmithButton{text:"Inspect model run status";enabled:!NativeTasks.busy;clicked=>{NativeTasks.inspect-operation();}}
+    }
+    if NativeTasks.running&&!NativeTasks.model-active: VerticalLayout {
+        spacing:8px;
+        Label{text:"Local tools · selected workspace";}
+        LineEdit{placeholder-text:"Relative workspace path";text<=>NativeTasks.path;}
+        TextEdit{text<=>NativeTasks.content;height:100px;}
+        HorizontalLayout{spacing:8px;SmithButton{text:"List files";enabled:!NativeTasks.busy&&NativeTasks.can-list;clicked=>{NativeTasks.list-files();}}SmithButton{text:"Read file";enabled:!NativeTasks.busy&&NativeTasks.can-read;clicked=>{NativeTasks.read-file();}}SmithButton{text:"Propose write";enabled:!NativeTasks.busy&&NativeTasks.can-write;clicked=>{NativeTasks.write-file();}}SmithButton{text:"Complete with this summary";enabled:!NativeTasks.busy&&NativeTasks.can-control;clicked=>{NativeTasks.complete();}}}
+    }
+    if NativeTasks.approval: VerticalLayout {
+        spacing:8px;Label{text:"Pending action";}
+        Text{text:NativeTasks.call;font-family:Palette.font-mono;font-size:11px;color:Palette.text-body;wrap:word-wrap;}
+        SmithCheck{text:"Approve this exact tool call";checked<=>NativeTasks.approval-confirmed;}
+        HorizontalLayout{spacing:8px;SmithButton{text:"Approve";kind:"primary";enabled:!NativeTasks.busy&&NativeTasks.approval-confirmed;clicked=>{NativeTasks.approve();}}SmithButton{text:"Deny";enabled:!NativeTasks.busy;clicked=>{NativeTasks.deny();}}}
+    }
+    if NativeTasks.interrupted: VerticalLayout{spacing:8px;Label{text:"This task was interrupted. Continue without replaying an uncertain external action; inspect its trace first.";}SmithButton{text:"Continue without replay";enabled:!NativeTasks.busy;clicked=>{NativeTasks.resume();}}}
+    if NativeTasks.clarification: HorizontalLayout{spacing:8px;LineEdit{placeholder-text:"Your clarification";text<=>NativeTasks.reply;}SmithButton{text:"Send clarification";enabled:!NativeTasks.busy;clicked=>{NativeTasks.clarify();}}}
+    if NativeTasks.selected-task&&!NativeTasks.terminal: SmithButton{text:"Cancel selected task";enabled:!NativeTasks.busy;clicked=>{NativeTasks.cancel();}}
+    if NativeTasks.selected-task: SmithCheck{text:"Show task trace";checked<=>NativeTasks.show-trace;}
+    if NativeTasks.selected-task&&NativeTasks.show-trace: VerticalLayout{spacing:8px;Text{text:NativeTasks.trace;font-family:Palette.font-mono;font-size:11px;color:Palette.text-body;wrap:word-wrap;}if NativeTasks.more: SmithButton{text:"Next trace page";enabled:!NativeTasks.busy;clicked=>{NativeTasks.trace-more();}}}
+}
+export component NativeTaskControls inherits HorizontalLayout {
+    spacing:0;
+    Rectangle{width:240px;background:Palette.page;
+        VerticalLayout{padding:18px;spacing:12px;
+            Text{text:"Agents";font-family:Palette.font-display;font-size:22px;font-weight:600;color:Palette.text-strong;}
+            Label{text:"Local task workspaces";}
+            SmithButton{text:"Refresh";enabled:!NativeTasks.busy;clicked=>{NativeTasks.refresh();}}
+            ComboBox{model:NativeTasks.workspaces;enabled:!NativeTasks.busy&&!NativeTasks.model-active;selected(value)=>{NativeTasks.select-workspace(self.current-index);}}
+            ComboBox{model:NativeTasks.tasks;enabled:!NativeTasks.busy&&!NativeTasks.model-active;selected(value)=>{NativeTasks.select-task(self.current-index);}}
+            Label{text:NativeTasks.workspace-detail;}
+            Rectangle{vertical-stretch:1;}
+        }
+    }
+    ScrollView{horizontal-stretch:1;
+        VerticalLayout{padding:24px;spacing:14px;
+            SmithButton{text:NativeTasks.show-setup?"Close workspace setup":"New workspace…";enabled:!NativeTasks.busy;clicked=>{NativeTasks.show-setup=!NativeTasks.show-setup;}}
+            if NativeTasks.show-setup: VerticalLayout{spacing:10px;
+            Text{text:"Create a local workspace";font-family:Palette.font-display;font-size:20px;font-weight:600;color:Palette.text-strong;}
+            Label{text:"Choose the permissions for this private temporary workspace.";}
+            LineEdit{placeholder-text:"Workspace name";text<=>NativeTasks.label;}
+            HorizontalLayout{spacing:12px;SmithCheck{text:"Read files";checked<=>NativeTasks.read;}SmithCheck{text:"List files";checked<=>NativeTasks.list;}SmithCheck{text:"Write files";checked<=>NativeTasks.write;}SmithCheck{text:"Task control";checked<=>NativeTasks.control;}}
+            HorizontalLayout{spacing:8px;SmithButton{text:"Review selected local model";enabled:!NativeTasks.busy&&!NativeTasks.model-active;clicked=>{NativeTasks.inspect-model();}}if NativeTasks.model-reviewed: Label{text:NativeTasks.model-detail;}}
+            SmithCheck{text:"Allow this reviewed model";checked<=>NativeTasks.use-model;enabled:NativeTasks.model-reviewed&&!NativeTasks.model-active;}
+            SmithButton{text:"Review workspace permissions";enabled:NativeTasks.available&&!NativeTasks.busy&&!NativeTasks.model-active;clicked=>{NativeTasks.review-workspace();}}
+            if NativeTasks.proposal!="": VerticalLayout{spacing:8px;Label{text:NativeTasks.proposal;}SmithCheck{text:"Confirm this workspace and permissions";checked<=>NativeTasks.confirmed;}SmithButton{text:"Create reviewed workspace";enabled:!NativeTasks.busy&&!NativeTasks.model-active&&NativeTasks.confirmed;clicked=>{NativeTasks.provision();}}}
+            }
+            SmithButton{text:NativeTasks.new-task?"Close new task":"New task…";enabled:!NativeTasks.busy;clicked=>{NativeTasks.new-task=!NativeTasks.new-task;}}
+            if NativeTasks.new-task: VerticalLayout{spacing:10px;
+            Label{text:"Task request for the selected workspace. Creating or starting it does not call a model.";}
+            TextEdit{text<=>NativeTasks.input;height:90px;}
+            SmithButton{text:"Create task";kind:"primary";enabled:NativeTasks.selected-workspace&&!NativeTasks.busy&&!NativeTasks.model-active&&NativeTasks.input!="";clicked=>{NativeTasks.create();}}
+            }
+            NativeTaskActions{}
+        }
+    }
+}

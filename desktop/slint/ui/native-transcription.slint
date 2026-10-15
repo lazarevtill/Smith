@@ -1,0 +1,25 @@
+import { LineEdit } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck } from "theme.slint";
+export global NativeTranscription {
+ in-out property <bool> setup:true;in-out property <bool> details;in-out property <bool> confirmed;
+ in-out property <bool> normalize; in property <bool> normalization-available;
+ in-out property <string> executable;in-out property <string> model;in-out property <string> title;
+ in property <bool> busy;in property <bool> running;in property <bool> uncertain;in property <bool> can-start;in property <bool> reviewed;
+ in property <bool> save-uncertain;in property <bool> save-retryable;in property <bool> cleanup-failed;
+ in property <string> summary;in property <string> hashes;
+ callback pick-executable();callback pick-model();callback review();callback cancel();callback inspect();callback retry-save();callback cleanup();
+}
+component Label inherits Text{font-family:Palette.font-body;font-size:12px;color:Palette.text-body;wrap:word-wrap;}
+export component NativeTranscriptionSetup inherits VerticalLayout {
+ spacing:6px;
+ SmithButton{text:NativeTranscription.setup?"Hide local transcriber setup":"Local transcriber setup";clicked=>{NativeTranscription.setup=!NativeTranscription.setup;}}
+ if NativeTranscription.setup: VerticalLayout{spacing:6px;
+ Label{text:"Whisper.cpp executable";}
+ HorizontalLayout{spacing:8px;LineEdit{text<=>NativeTranscription.executable;enabled:!NativeTranscription.busy&&!NativeTranscription.running&&!NativeTranscription.uncertain;}SmithButton{text:"Choose…";enabled:!NativeTranscription.busy&&!NativeTranscription.running&&!NativeTranscription.uncertain;clicked=>{NativeTranscription.pick-executable();}}}
+ Label{text:"Existing GGML speech model";}
+ HorizontalLayout{spacing:8px;LineEdit{text<=>NativeTranscription.model;enabled:!NativeTranscription.busy&&!NativeTranscription.running&&!NativeTranscription.uncertain;}SmithButton{text:"Choose…";enabled:!NativeTranscription.busy&&!NativeTranscription.running&&!NativeTranscription.uncertain;clicked=>{NativeTranscription.pick-model();}}}
+ SmithButton{text:"Review selected transcriber";enabled:!NativeTranscription.busy&&!NativeTranscription.running&&!NativeTranscription.uncertain;clicked=>{NativeTranscription.review();}}
+ }
+ if NativeTranscription.reviewed: VerticalLayout{spacing:6px;Label{text:NativeTranscription.summary;}SmithCheck{text:"Normalize selected WAV, AIFF or M4A audio (up to 60 seconds / 8 MiB)";checked<=>NativeTranscription.normalize;enabled:NativeTranscription.normalization-available&&!NativeTranscription.busy&&!NativeTranscription.running&&!NativeTranscription.uncertain;toggled=>{NativeTranscription.confirmed=false;}}if NativeTranscription.normalize:Label{text:"Uses the reviewed Apple audio converter, then this local transcriber. MP3, FLAC, video and URLs are not supported.";}SmithCheck{text:"Run this trusted native executable on my selected audio file";checked<=>NativeTranscription.confirmed;enabled:!NativeTranscription.busy&&!NativeTranscription.running&&!NativeTranscription.uncertain;}Label{text:"This executable runs as your user. Hash review does not sandbox native code.";}SmithCheck{text:"Show exact hashes";checked<=>NativeTranscription.details;}if NativeTranscription.details:Label{text:NativeTranscription.hashes;}}
+ HorizontalLayout{spacing:8px;if NativeTranscription.cleanup-failed:SmithButton{text:"Retry cleanup";enabled:!NativeTranscription.busy;clicked=>{NativeTranscription.cleanup();}}if NativeTranscription.save-retryable:SmithButton{text:"Retry same save";enabled:!NativeTranscription.busy;clicked=>{NativeTranscription.retry-save();}}if NativeTranscription.running:SmithButton{text:"Cancel transcription";enabled:!NativeTranscription.busy;clicked=>{NativeTranscription.cancel();}}if NativeTranscription.uncertain:SmithButton{text:NativeTranscription.save-uncertain?"Inspect saved transcript":"Inspect submitted transcription";enabled:!NativeTranscription.busy;clicked=>{NativeTranscription.inspect();}}}
+}

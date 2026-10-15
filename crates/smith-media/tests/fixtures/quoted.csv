@@ -1,0 +1,4 @@
+name,notes,empty
+"Ada, A.","said ""hello""",
+Grace,"line one
+line two",=SUM(A1:A2)

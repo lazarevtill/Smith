@@ -1,0 +1,182 @@
+import { LineEdit, ComboBox } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck } from "theme.slint";
+
+export global NativeSettings {
+    in-out property <int> engine-index: 0;
+    in-out property <bool> advanced;
+    in-out property <bool> details;
+    in-out property <int> provider-index: 0;
+    in-out property <string> endpoint;
+    in-out property <string> token;
+    in property <string> connection-status;
+    in property <[string]> models;
+    in-out property <string> selected-model;
+    in property <bool> busy: true;
+    in property <bool> available: false;
+    in-out property <int> mode-index: 0;
+    in-out property <int> preference-index: 0;
+    in-out property <int> fallback-index: 1;
+    in-out property <int> backend-index: 0;
+    in-out property <string> context;
+    in-out property <string> threads;
+    in-out property <string> layers;
+    in-out property <string> output;in-out property <string> prefill-threads;in-out property <string> batch;in-out property <string> microbatch;
+    in-out property <string> device;in-out property <string> host-budget;in-out property <string> device-budget;in-out property <string> headroom;
+    in-out property <int> kv-index;in-out property <int> flash-index;in-out property <int> mmap-index;in-out property <int> mlock-index;
+    in-out property <string> executable;
+    in-out property <string> model;
+    in-out property <string> model-id;
+    in-out property <string> source: "User-selected local runtime";
+    in-out property <string> source-revision: "local-selection";
+    in property <string> saved-intent;
+    in property <string> inventory-status;
+    in property <string> operation-status;
+    in property <string> selection-review;in property <string> selection-details;in property <string> plan-details;
+    in property <string> plan-review;
+    in property <string> runtime-status;
+    in property <bool> can-probe: false;
+    in property <bool> can-load: false;
+    in property <bool> can-cancel: false;
+    in property <bool> can-unload: false;
+    in-out property <bool> probe-confirmed: false;
+    in-out property <bool> load-confirmed: false;
+    callback reload();
+    callback refresh();
+    callback save();
+    callback test();
+    callback set-token();
+    callback clear-token();
+    callback select-model(string);
+    callback preferences();
+    callback reset();
+    callback rollback();
+    callback inventory();
+    callback inspect();
+    callback pick-executable();
+    callback pick-model();
+    callback probe();
+    callback apply();
+    callback cancel();
+    callback unload();
+}
+component Label inherits Text {
+    color: Palette.text-body;
+    font-family: Palette.font-body;
+    font-size: 12px;
+    wrap: word-wrap;
+}
+component ReviewText inherits Text {
+    color: Palette.text-body;
+    font-family: Palette.font-mono;
+    font-size: 11px;
+    wrap: word-wrap;
+}
+export component NativeConnectionControls inherits VerticalLayout {
+    spacing: 10px;
+    Label { text: "Choose your inference connection, then test it to list available models."; }
+    ComboBox {
+        model: ["Demo", "Ollama", "OpenAI-compatible", "Owned GGUF model", "Owned MLX model"];
+        current-index <=> NativeSettings.provider-index;
+        enabled: NativeSettings.available && !NativeSettings.busy;
+    }
+    if NativeSettings.provider-index == 1 || NativeSettings.provider-index == 2: LineEdit {
+        placeholder-text: "http://127.0.0.1:11434 or http://127.0.0.1:8080/v1";
+        text <=> NativeSettings.endpoint;
+    }
+    if NativeSettings.provider-index >= 3: Label { text: "Select and review an existing runtime and model in Inference. Loading the reviewed plan selects this connection."; }
+    HorizontalLayout {
+        spacing: 8px;
+        SmithButton { text: "Save connection"; kind: "primary"; enabled: NativeSettings.available && !NativeSettings.busy && NativeSettings.provider-index < 3; clicked => { NativeSettings.save(); } }
+        SmithButton { text: "Test saved connection"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.test(); } }
+        SmithButton { text: "Reload saved settings"; enabled: !NativeSettings.busy; clicked => { NativeSettings.reload(); } }
+    }
+    Label { text: NativeSettings.connection-status; }
+    ComboBox {
+        model: NativeSettings.models;
+        current-value <=> NativeSettings.selected-model;
+        enabled: NativeSettings.available && !NativeSettings.busy && NativeSettings.models.length > 0;
+        selected(value) => { NativeSettings.select-model(value); }
+    }
+    if NativeSettings.provider-index == 1 || NativeSettings.provider-index == 2: VerticalLayout {
+        spacing: 8px;
+        Label { text: "Optional server token · cleared when the app closes."; }
+        LineEdit { input-type: password; placeholder-text: "Optional session bearer token"; text <=> NativeSettings.token; }
+        HorizontalLayout {
+            spacing: 8px;
+            SmithButton { text: "Use token for this session"; enabled: NativeSettings.available && !NativeSettings.busy && NativeSettings.token != ""; clicked => { NativeSettings.set-token(); } }
+            SmithButton { text: "Clear session token"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.clear-token(); } }
+        }
+    }
+}
+export component NativeSetupControls inherits VerticalLayout {
+    spacing: 10px;
+    Label { text: "Choose a local GGUF model and review its recommended settings."; }
+    HorizontalLayout {
+        spacing: 8px;
+        ComboBox { model: ["Auto", "Manual"]; current-index <=> NativeSettings.mode-index; }
+        ComboBox { model: ["Balanced", "Fast", "Quiet"]; current-index <=> NativeSettings.preference-index; }
+        ComboBox { model: ["Never fall back", "Ask before fallback", "Verified local fallback"]; current-index <=> NativeSettings.fallback-index; }
+    }
+    ComboBox { model: ["Automatic backend", "CPU", "Metal", "CUDA", "ROCm / HIP", "Intel SYCL", "Vulkan", "MLX · use MLX engine"]; current-index <=> NativeSettings.backend-index; }
+
+    HorizontalLayout {
+        spacing: 8px;
+        LineEdit { placeholder-text: "Context tokens · Auto"; text <=> NativeSettings.context; }
+        LineEdit { placeholder-text: "Threads · Auto"; text <=> NativeSettings.threads; }
+        LineEdit { placeholder-text: "GPU layers · Auto"; text <=> NativeSettings.layers; }
+    }
+    SmithCheck {text:"Advanced settings";checked<=>NativeSettings.advanced;}
+    if NativeSettings.advanced: VerticalLayout {spacing:8px;
+        Label{text:"Leave fields empty for Auto. Unsupported overrides are refused.";}
+        HorizontalLayout{spacing:8px;LineEdit{placeholder-text:"Output tokens · Auto";text<=>NativeSettings.output;}LineEdit{placeholder-text:"Prefill threads · Auto";text<=>NativeSettings.prefill-threads;}}
+        HorizontalLayout{spacing:8px;LineEdit{placeholder-text:"Batch tokens · Auto";text<=>NativeSettings.batch;}LineEdit{placeholder-text:"Microbatch tokens · Auto";text<=>NativeSettings.microbatch;}}
+        HorizontalLayout{spacing:8px;Label{text:"KV precision";}ComboBox{model:["Auto","F16","Q8","Q4","F32","BF16"];current-index<=>NativeSettings.kv-index;}Label{text:"Flash attention";}ComboBox{model:["Auto","On","Off"];current-index<=>NativeSettings.flash-index;}}
+        HorizontalLayout{spacing:8px;Label{text:"Memory mapping";}ComboBox{model:["Auto","On","Off"];current-index<=>NativeSettings.mmap-index;}Label{text:"Memory locking";}ComboBox{model:["Auto","On","Off"];current-index<=>NativeSettings.mlock-index;}}
+        LineEdit{placeholder-text:"Exact inventory device ID · Auto";text<=>NativeSettings.device;}
+        Label{text:"Memory limits in bytes · empty for Auto. The selected runtime must be able to enforce a pinned limit.";}
+        HorizontalLayout{spacing:8px;LineEdit{placeholder-text:"Host budget";text<=>NativeSettings.host-budget;}LineEdit{placeholder-text:"Device budget";text<=>NativeSettings.device-budget;}LineEdit{placeholder-text:"Free headroom";text<=>NativeSettings.headroom;}}
+    }
+    HorizontalLayout {
+        spacing: 8px;
+        SmithButton { text: "Save inference preferences"; kind: "primary"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.preferences(); } }
+        SmithButton { text: "Reset overrides"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.reset(); } }
+        SmithButton { text: "Previous saved settings"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.rollback(); } }
+    }
+    SmithCheck {text:"Show advanced review details";checked<=>NativeSettings.details;}
+    if NativeSettings.details: ReviewText { text: NativeSettings.saved-intent; }
+    SmithButton { text: "Inspect this computer"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.inventory(); } }
+    if NativeSettings.details: ReviewText { text: NativeSettings.inventory-status; }
+    Label { text: "Existing runtime and model files"; }
+    HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Existing runtime executable path"; text <=> NativeSettings.executable; } SmithButton { text: "Choose runtime…"; enabled: !NativeSettings.busy; clicked => { NativeSettings.pick-executable(); } } }
+    HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Existing GGUF model path"; text <=> NativeSettings.model; } SmithButton { text: "Choose model…"; enabled: !NativeSettings.busy; clicked => { NativeSettings.pick-model(); } } }
+    LineEdit { placeholder-text: "Model display name"; text <=> NativeSettings.model-id; }
+    if NativeSettings.details: HorizontalLayout {
+        spacing: 8px;
+        LineEdit { placeholder-text: "Source / provenance description"; text <=> NativeSettings.source; }
+        LineEdit { placeholder-text: "Exact source version or revision"; text <=> NativeSettings.source-revision; }
+    }
+    SmithButton { text: "Inspect selected files"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.inspect(); } }
+    if NativeSettings.selection-review!="": VerticalLayout { spacing:8px;
+    Label { text: NativeSettings.selection-review; }
+    if NativeSettings.details: ReviewText {text:NativeSettings.selection-details;}
+    Label { text: "The selected executable will run its --help and --list-devices checks. Native code will execute; no model will load."; }
+    SmithCheck { text: "Allow these reviewed runtime checks"; checked <=> NativeSettings.probe-confirmed; enabled: NativeSettings.can-probe && !NativeSettings.busy; }
+    SmithButton { text: "Run selected executable checks"; enabled: NativeSettings.can-probe && NativeSettings.probe-confirmed && !NativeSettings.busy; clicked => { NativeSettings.probe(); } }
+    }
+    if NativeSettings.plan-review!="": VerticalLayout {spacing:8px;
+    Label { text: NativeSettings.plan-review; }
+    if NativeSettings.details: ReviewText {text:NativeSettings.plan-details;}
+    Label { text: "Review the selected files and settings. Exact hashes and arguments are available in review details."; }
+    SmithCheck { text: "Approve this exact load plan"; checked <=> NativeSettings.load-confirmed; enabled: NativeSettings.can-load && !NativeSettings.busy; }
+    SmithButton { text: "Load reviewed local model"; kind: "primary"; enabled: NativeSettings.can-load && NativeSettings.load-confirmed && !NativeSettings.busy; clicked => { NativeSettings.apply(); } }
+    }
+    Label { text: NativeSettings.operation-status; }
+    Label { text: NativeSettings.runtime-status; }
+    HorizontalLayout {
+        spacing: 8px;
+        SmithButton { text: "Cancel operation"; enabled: NativeSettings.can-cancel; clicked => { NativeSettings.cancel(); } }
+        SmithButton { text: "Unload owned local model"; enabled: NativeSettings.can-unload && !NativeSettings.busy; clicked => { NativeSettings.unload(); } }
+        SmithButton { text: "Refresh status"; enabled: !NativeSettings.busy; clicked => { NativeSettings.refresh(); } }
+    }
+    Label { text: "Stopping a GGUF response also unloads its model."; }
+}

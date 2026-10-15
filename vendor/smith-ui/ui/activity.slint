@@ -1,0 +1,707 @@
+// Activity view — makes the invisible autonomy work visible: every agent run
+// (manual, "run in background", scheduled, or watcher-fired) is a persisted
+// `Task` row; this view lists live + historical runs and lets you open one to
+// see its full transcript, cancel a running one, or answer a pending
+// clarification question. Backed by `Database::list_tasks`/`get_task` +
+// `AppState::task_cancel`, wired in `smith-ui/src/lib.rs`.
+//
+// P4 "Consolidate navigation": this is now a small hub, not just the Runs
+// list — a left sub-nav (mirroring AgentsAutonomyView's pattern) switches
+// between Runs, Artifacts, Transcribe, and Memory (moved here from the
+// Agents & Autonomy sub-tabs, per the doc's "move Memory next to Activity").
+// This is how the rail drops from 7 destinations to 5: Artifacts and
+// Transcribe stop being separate rail buttons and become sub-tabs here
+// instead, alongside the Runs list they conceptually belong with (things
+// that accumulate from using the app). ArtifactsView/TranscribeView are
+// embedded verbatim (not re-implemented) — same pattern AgentsAutonomyView
+// already uses for AgentsView.
+
+import { LineEdit, ListView, ScrollView } from "std-widgets.slint";
+import { Palette, SmithButton, EmptyState, SectionLabel, ConfirmButton } from "theme.slint";
+import { Icons } from "icons.slint";
+import { ArtifactsView, ArtifactItem } from "artifacts.slint";
+import { TranscribeView, TranscriptItem } from "transcribe.slint";
+import { MemoryItem } from "settings.slint";
+
+// One run row + everything the detail pane needs — kept flat (no nested
+// models) so selecting a row never requires a second async fetch beyond the
+// initial list load / periodic refresh.
+export struct ActivityItem {
+    id: string,
+    agent-name: string,
+    // "Manual" | "Background" | "Schedule" | "Watcher".
+    trigger: string,
+    // "Pending" | "Running" | "Needs input" | "Completed" | "Failed" | "Cancelled".
+    status: string,
+    started: string,
+    duration: string,
+    input: string,
+    // The final answer, or — while status == "Needs input" — the pending question.
+    output: string,
+    error: string,
+    // The full transcript, pre-formatted as "role: content" lines.
+    transcript-text: string,
+    needs-clarification: bool,
+    // True while Pending/Running/Needs input — the states Cancel applies to.
+    cancellable: bool,
+}
+
+// A titled card, used by the Memory sub-tab (copied from agents-autonomy.slint
+// — that component is file-private there too; same small-duplication
+// convention this codebase already uses for Card/TabRow/ConfirmDeleteIcon).
+component Card inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    border-radius: Palette.radius;
+    background: Palette.raised;
+    border-width: 1px;
+    border-color: Palette.border;
+    VerticalLayout {
+        alignment: start;
+        padding: 16px;
+        spacing: 10px;
+        if root.title != "": Text {
+            text: root.title;
+            color: Palette.text-strong;
+            font-family: Palette.font-body;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        if root.description != "": Text {
+            text: root.description;
+            color: Palette.text-muted;
+            font-family: Palette.font-body;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        @children
+    }
+}
+
+// One row in the left sub-nav (copied from agents-autonomy.slint — file-private there too).
+component TabRow inherits Rectangle {
+    in property <string> label;
+    in property <int> index;
+    in property <int> active-index;
+    callback picked(int);
+    property <bool> active: root.index == root.active-index;
+    height: 34px;
+    border-radius: Palette.radius;
+    background: root.active ? Palette.muted : (ta.has-hover ? Palette.hover : transparent);
+    animate background { duration: 100ms; }
+    Rectangle {
+        x: 0;
+        y: 7px;
+        width: 3px;
+        height: parent.height - 14px;
+        border-radius: 2px;
+        background: Palette.accent;
+        opacity: root.active ? 1.0 : 0.0;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.picked(root.index); }
+    }
+    Text {
+        x: 14px;
+        vertical-alignment: center;
+        text: root.label;
+        color: root.active ? Palette.text-strong : Palette.text-body;
+        font-family: Palette.font-body;
+        font-size: 13px;
+        font-weight: root.active ? 600 : 500;
+    }
+}
+
+export component ActivityView inherits Rectangle {
+    background: Palette.page;
+    min-width: 0px;
+    preferred-width: 900px;
+
+    // Which sub-tab is active: 0=Runs, 1=Artifacts, 2=Transcribe, 3=Memory.
+    in-out property <int> sub-view: 0;
+
+    in property <[ActivityItem]> tasks;
+    in-out property <string> selected-task: "";
+    in-out property <string> clarify-reply: "";
+    // Resolved by Rust (Slint's expression language has no general array
+    // search), kept in sync with `selected-task` on every list refresh and
+    // on select: the task to show in the detail pane, and whether one is
+    // actually selected (vs. this being a stale/default value).
+    in property <ActivityItem> detail;
+    in property <bool> has-selection: false;
+    in property <bool> compact: false;
+
+    callback refresh();
+    callback select-task(string);
+    callback cancel-task(string);
+    callback answer-clarification(string, string);
+
+    // --- Artifacts (passed through to the embedded ArtifactsView) ---------
+    in property <[ArtifactItem]> artifacts-list: [];
+    in-out property <string> artifacts-status: "";
+    in-out property <bool> artifacts-viewer-open: false;
+    in-out property <string> artifacts-viewer-title: "";
+    in-out property <string> artifacts-viewer-text: "";
+    in-out property <bool> artifacts-viewer-is-image: false;
+    in-out property <image> artifacts-viewer-image;
+    in-out property <string> artifacts-viewer-artifact-id: "";
+    in-out property <bool> artifacts-viewer-busy: false;
+    in-out property <bool> artifacts-viewer-opening: false;
+    in-out property <string> artifacts-renaming-id: "";
+    in-out property <string> artifacts-rename-text: "";
+    callback artifacts-refresh();
+    callback artifacts-register-folder();
+    callback artifacts-open(string);
+    callback artifacts-delete(string);
+    callback artifacts-rename(string, string);
+    callback artifacts-edit-image(string, string);
+    callback artifacts-variation-image(string);
+    callback artifacts-upscale-image(string);
+
+    // --- Transcribe (passed through to the embedded TranscribeView) -------
+    in-out property <string> transcribe-source: "";
+    in-out property <string> transcribe-lang: "Auto";
+    in-out property <string> transcribe-format: "text";
+    in property <string> transcribe-output: "";
+    in-out property <string> transcribe-status: "";
+    in-out property <bool> transcribe-busy: false;
+    in-out property <bool> transcribe-has-result: false;
+    in property <[TranscriptItem]> transcribe-artifacts: [];
+    in-out property <string> transcribe-selected-artifact: "";
+    callback transcribe-pick-file();
+    callback transcribe-start();
+    callback transcribe-save();
+    callback transcribe-copy();
+    callback transcribe-summarize();
+    callback transcribe-save-artifact();
+    callback transcribe-load-artifact(string);
+    callback transcribe-delete-artifact(string);
+
+    // --- Memory (moved from Agents & Autonomy, P4 "move Memory next to
+    // Activity") -----------------------------------------------------------
+    in property <[MemoryItem]> memory-rows;
+    in-out property <string> memory-query;
+    in property <bool> memory-searching: false;
+    callback search-memory();
+    in property <bool> memory-browsing: false;
+    callback browse-memory();
+    callback delete-memory(string);
+    callback toggle-pin-memory(string);
+
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0;
+
+        // --- Left: sub-nav ---------------------------------------------------
+        Rectangle {
+            width: 176px;
+            background: Palette.sunken;
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Palette.border;
+            }
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                Text {
+                    text: "Activity";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 18px;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                }
+                VerticalLayout {
+                    alignment: start;
+                    spacing: 3px;
+                    // Not "ARTIFACTS": this groups four distinct tabs (Runs,
+                    // Artifacts, Transcribe, Memory), and "Artifacts" is
+                    // already the name of one specific tab beneath it —
+                    // reusing it here would read as "Artifacts > Artifacts".
+                    SectionLabel { text: "HISTORY"; }
+                    TabRow {
+                        label: "Runs";
+                        index: 0;
+                        active-index: root.sub-view;
+                        picked(i) => { root.sub-view = i; root.refresh(); }
+                    }
+                    TabRow {
+                        label: "Artifacts";
+                        index: 1;
+                        active-index: root.sub-view;
+                        picked(i) => { root.sub-view = i; root.artifacts-refresh(); }
+                    }
+                    TabRow {
+                        label: "Transcribe";
+                        index: 2;
+                        active-index: root.sub-view;
+                        picked(i) => { root.sub-view = i; }
+                    }
+                    TabRow {
+                        label: "Memory";
+                        index: 3;
+                        active-index: root.sub-view;
+                        picked(i) => { root.sub-view = i; }
+                    }
+                }
+            }
+        }
+
+        if root.sub-view == 1: ArtifactsView {
+            horizontal-stretch: 1;
+            artifacts: root.artifacts-list;
+            status <=> root.artifacts-status;
+            viewer-open <=> root.artifacts-viewer-open;
+            viewer-title <=> root.artifacts-viewer-title;
+            viewer-text <=> root.artifacts-viewer-text;
+            viewer-is-image <=> root.artifacts-viewer-is-image;
+            viewer-image <=> root.artifacts-viewer-image;
+            viewer-artifact-id <=> root.artifacts-viewer-artifact-id;
+            viewer-busy <=> root.artifacts-viewer-busy;
+            viewer-opening <=> root.artifacts-viewer-opening;
+            renaming-artifact-id <=> root.artifacts-renaming-id;
+            rename-text <=> root.artifacts-rename-text;
+            register-folder => { root.artifacts-register-folder(); }
+            open-artifact(id) => { root.artifacts-open(id); }
+            delete-artifact(id) => { root.artifacts-delete(id); }
+            rename-artifact(id, title) => { root.artifacts-rename(id, title); }
+            close-viewer => { root.artifacts-viewer-open = false; }
+            edit-image(id, prompt) => { root.artifacts-edit-image(id, prompt); }
+            variation-image(id) => { root.artifacts-variation-image(id); }
+            upscale-image(id) => { root.artifacts-upscale-image(id); }
+        }
+
+        if root.sub-view == 2: TranscribeView {
+            horizontal-stretch: 1;
+            compact: root.compact;
+            source <=> root.transcribe-source;
+            lang <=> root.transcribe-lang;
+            format <=> root.transcribe-format;
+            output: root.transcribe-output;
+            status <=> root.transcribe-status;
+            busy <=> root.transcribe-busy;
+            has-result <=> root.transcribe-has-result;
+            artifacts: root.transcribe-artifacts;
+            selected-artifact <=> root.transcribe-selected-artifact;
+            pick-file => { root.transcribe-pick-file(); }
+            start => { root.transcribe-start(); }
+            summarize => { root.transcribe-summarize(); }
+            save-artifact => { root.transcribe-save-artifact(); }
+            load-artifact(id) => { root.transcribe-load-artifact(id); }
+            delete-artifact(id) => { root.transcribe-delete-artifact(id); }
+            save-output => { root.transcribe-save(); }
+            copy-output => { root.transcribe-copy(); }
+        }
+
+        if root.sub-view == 3: ScrollView {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding: 24px;
+                spacing: 16px;
+                Text {
+                    text: "Memory";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 22px;
+                    font-weight: 600;
+                }
+                Card {
+                    title: "Search memory";
+                    description: "Recall distilled episodes and pinned facts across sessions, or browse everything that's stored.";
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit {
+                            placeholder-text: "Search…";
+                            text <=> root.memory-query;
+                            enabled: !root.memory-searching && !root.memory-browsing;
+                            accepted => { root.search-memory(); }
+                        }
+                        SmithButton {
+                            text: root.memory-searching ? "Searching…" : "Search";
+                            kind: "primary";
+                            width: 120px;
+                            enabled: !root.memory-searching && !root.memory-browsing;
+                            clicked => { root.search-memory(); }
+                        }
+                        SmithButton {
+                            text: root.memory-browsing ? "Loading…" : "Browse all";
+                            kind: "secondary";
+                            width: 120px;
+                            enabled: !root.memory-searching && !root.memory-browsing;
+                            clicked => { root.browse-memory(); }
+                        }
+                    }
+                }
+                Card {
+                    title: "Results";
+                    VerticalLayout {
+                        spacing: 12px;
+                        if root.memory-rows.length == 0: EmptyState {
+                            icon: Icons.book;
+                            title: root.memory-searching || root.memory-browsing ? "Loading memory…" : "No results yet";
+                            message: root.memory-searching || root.memory-browsing
+                                ? "Results will appear here when the request finishes."
+                                : "Type a query and search, or Browse all, to see recalled episodes and pinned facts.";
+                        }
+                        for mem in root.memory-rows: HorizontalLayout {
+                            spacing: 8px;
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 2px;
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    if mem.pinned: Text { text: "📌"; font-size: 11px; }
+                                    Text { text: mem.summary; color: Palette.text-body; font-family: Palette.font-body; font-size: 13px; wrap: word-wrap; horizontal-stretch: 1; }
+                                }
+                                Text { text: mem.meta; color: Palette.text-subtle; font-family: Palette.font-mono; font-size: 10px; }
+                            }
+                            if mem.id != "": VerticalLayout {
+                                alignment: center;
+                                SmithButton {
+                                    text: mem.pinned ? "Unpin" : "Pin";
+                                    kind: "secondary";
+                                    width: 70px;
+                                    clicked => { root.toggle-pin-memory(mem.id); }
+                                }
+                            }
+                            if mem.id != "": VerticalLayout {
+                                alignment: center;
+                                ConfirmButton {
+                                    label: "Delete";
+                                    confirm-text: "Delete?";
+                                    reset-key: mem.id;
+                                    confirmed => { root.delete-memory(mem.id); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if root.sub-view == 0: HorizontalLayout {
+        horizontal-stretch: 1;
+        spacing: 0;
+
+        // ---- left: run list ----
+        if !root.compact || !root.has-selection: Rectangle {
+            min-width: root.compact ? 0px : 340px;
+            max-width: root.compact ? 100000px : 340px;
+            horizontal-stretch: root.compact ? 1 : 0;
+            background: Palette.page;
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Palette.border;
+            }
+            VerticalLayout {
+                padding: 18px;
+                spacing: 14px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: "Runs";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-display;
+                        font-size: 22px;
+                        font-weight: 600;
+                        vertical-stretch: 1;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Rectangle {
+                        width: 30px;
+                        height: 30px;
+                        border-radius: Palette.radius;
+                        background: refresh-ta.has-hover ? Palette.hover : transparent;
+                        Image {
+                            width: 15px;
+                            height: 15px;
+                            source: Icons.refresh;
+                            colorize: Palette.text-subtle;
+                        }
+                        refresh-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.refresh(); }
+                        }
+                    }
+                }
+                if root.tasks.length == 0: EmptyState {
+                    vertical-stretch: 1;
+                    icon: Icons.activity;
+                    title: "No runs yet";
+                    message: "Runs you start from Chat or the Agents list — and schedules/watchers as they fire — show up here.";
+                }
+                if root.tasks.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for t in root.tasks: Rectangle {
+                        height: 66px;
+                        border-radius: Palette.radius;
+                        background: t.id == root.selected-task
+                            ? Palette.sunken
+                            : (trow.has-hover ? Palette.hover : transparent);
+                        animate background { duration: 100ms; }
+                        Rectangle {
+                            x: 0;
+                            y: 12px;
+                            width: 3px;
+                            height: parent.height - 24px;
+                            border-radius: 2px;
+                            background: Palette.accent;
+                            opacity: t.id == root.selected-task ? 1.0 : 0.0;
+                        }
+                        trow := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                // BUG F fix: clarify-reply is a single property
+                                // shared across every task row (not per-row
+                                // state), so switching the selected task must
+                                // drop any draft reply typed for the *previous*
+                                // task — otherwise a stale draft for task A can
+                                // get submitted under task B's id.
+                                if t.id != root.selected-task {
+                                    root.clarify-reply = "";
+                                }
+                                root.selected-task = t.id;
+                                root.select-task(t.id);
+                            }
+                        }
+                        VerticalLayout {
+                            padding-left: 14px;
+                            padding-right: 12px;
+                            padding-top: 8px;
+                            padding-bottom: 8px;
+                            spacing: 3px;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Text {
+                                    text: t.agent-name == "" ? "(no agent)" : t.agent-name;
+                                    color: Palette.text-strong;
+                                    font-family: Palette.font-body;
+                                    font-size: 14px;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
+                                Rectangle {
+                                    border-radius: 3px;
+                                    background: t.status == "Failed" ? Palette.red
+                                        : (t.status == "Needs input" ? Palette.accent : Palette.muted);
+                                    height: status-label.preferred-height + 4px;
+                                    width: status-label.preferred-width + 10px;
+                                    status-label := Text {
+                                        text: t.status;
+                                        color: (t.status == "Failed" || t.status == "Needs input") ? Palette.white : Palette.text-muted;
+                                        font-family: Palette.font-mono;
+                                        font-size: 10px;
+                                        font-weight: 600;
+                                    }
+                                }
+                            }
+                            Text {
+                                text: t.trigger + "  ·  " + t.started + (t.duration == "" ? "" : "  ·  " + t.duration);
+                                color: Palette.text-muted;
+                                font-family: Palette.font-mono;
+                                font-size: 11px;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- right: run detail ----
+        if !root.has-selection && !root.compact: Rectangle {
+            horizontal-stretch: 1;
+            EmptyState {
+                icon: Icons.activity;
+                title: "Select a run";
+                message: "Pick a run on the left to see its full transcript.";
+            }
+        }
+        if root.has-selection: ScrollView {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding: 24px;
+                spacing: 14px;
+
+                if root.compact: SmithButton {
+                    text: "Back to runs";
+                    clicked => {
+                        root.clarify-reply = "";
+                        root.selected-task = "";
+                        root.select-task("");
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    Text {
+                        text: root.detail.agent-name == "" ? "(no agent)" : root.detail.agent-name;
+                        color: Palette.text-strong;
+                        font-family: Palette.font-display;
+                        font-size: 20px;
+                        font-weight: 600;
+                        vertical-stretch: 1;
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    if root.detail.cancellable: SmithButton {
+                        text: "Cancel";
+                        kind: "destructive";
+                        width: 90px;
+                        clicked => { root.cancel-task(root.detail.id); }
+                    }
+                }
+                Text {
+                    text: root.detail.trigger + "  ·  " + root.detail.status
+                        + "  ·  started " + root.detail.started
+                        + (root.detail.duration == "" ? "" : "  ·  " + root.detail.duration);
+                    color: Palette.text-muted;
+                    font-family: Palette.font-mono;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "Input";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    Text {
+                        text: root.detail.input == "" ? "—" : root.detail.input;
+                        color: Palette.text-body;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "Transcript";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    Rectangle {
+                        border-radius: Palette.radius;
+                        border-width: 1px;
+                        border-color: Palette.border;
+                        background: Palette.sunken;
+                        height: max(60px, transcript-text.preferred-height + 20px);
+                        transcript-text := Text {
+                            x: 11px;
+                            y: 10px;
+                            width: parent.width - 22px;
+                            text: root.detail.transcript-text == "" ? "(no transcript yet)" : root.detail.transcript-text;
+                            color: Palette.text-body;
+                            font-family: Palette.font-mono;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
+
+                if root.detail.error != "": VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "Error";
+                        color: Palette.red;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    Text {
+                        text: root.detail.error;
+                        color: Palette.red;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+                }
+
+                // Inline clarification answer box — only while the run is
+                // genuinely paused waiting on the user.
+                if root.detail.needs-clarification: VerticalLayout {
+                    spacing: 6px;
+                    Rectangle {
+                        border-radius: Palette.radius;
+                        border-width: 1px;
+                        border-color: Palette.accent;
+                        background: Palette.sunken;
+                        height: clarify-box.preferred-height + 20px;
+                        clarify-box := VerticalLayout {
+                            x: 11px;
+                            y: 10px;
+                            width: parent.width - 22px;
+                            height: self.preferred-height;
+                            spacing: 8px;
+                            Text {
+                                text: "❓ " + (root.detail.output == "" ? "This run needs more information." : root.detail.output);
+                                color: Palette.text-strong;
+                                font-family: Palette.font-body;
+                                font-size: 13.5px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                reply-edit := LineEdit {
+                                    text <=> root.clarify-reply;
+                                    placeholder-text: "Type your answer…";
+                                    horizontal-stretch: 1;
+                                    accepted(text) => {
+                                        if text != "" {
+                                            root.answer-clarification(root.detail.id, text);
+                                            root.clarify-reply = "";
+                                        }
+                                    }
+                                }
+                                SmithButton {
+                                    text: "Reply";
+                                    kind: "primary";
+                                    width: 80px;
+                                    clicked => {
+                                        if reply-edit.text != "" {
+                                            root.answer-clarification(root.detail.id, reply-edit.text);
+                                            root.clarify-reply = "";
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !root.detail.needs-clarification && root.detail.output != "": VerticalLayout {
+                    spacing: 6px;
+                    Text {
+                        text: "Result";
+                        color: Palette.text-strong;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        font-weight: 600;
+                    }
+                    Text {
+                        text: root.detail.output;
+                        color: Palette.text-body;
+                        font-family: Palette.font-body;
+                        font-size: 13px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+        }
+        }
+    }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "smith-profile-migrate"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+publish = false
+
+[workspace]
+
+[dependencies]
+rusqlite = { version = "=0.37.0", features = ["bundled-sqlcipher"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "=0.11.0"
+hkdf = "=0.13.0"
+chacha20poly1305 = "=0.11.0"
+zeroize = "=1.9.0"
+tempfile = "3"
+libc = "0.2"
+uuid = { version = "1", features = ["v4"] }

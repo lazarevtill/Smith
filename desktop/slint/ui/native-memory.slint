@@ -1,0 +1,35 @@
+import { LineEdit, TextEdit } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck } from "theme.slint";
+export global NativeMemory {
+ in-out property <string> namespace; in-out property <bool> deleted;
+ in-out property <bool> editor-open; in property <bool> editing;
+ in-out property <string> create-namespace; in-out property <string> fact; in-out property <string> tags;
+ in property <bool> busy; in property <bool> can-next; in property <bool> can-create; in property <bool> can-undo;
+ in property <string> status;
+ callback next(); callback new-memory(); callback edit(string); callback save(); callback undo-trash(); callback scope-changed();
+}
+component Label inherits Text {font-family:Palette.font-body;font-size:12px;color:Palette.text-body;wrap:word-wrap;}
+export component NativeMemoryControls inherits VerticalLayout {
+ spacing:8px;
+ HorizontalLayout {spacing:8px;
+  Label{text:"Namespace";vertical-alignment:center;}
+  LineEdit{text<=>NativeMemory.namespace;placeholder-text:"All namespaces";enabled:!NativeMemory.busy;edited=>{NativeMemory.scope-changed();}}
+  SmithCheck{text:"Trash";checked<=>NativeMemory.deleted;enabled:!NativeMemory.busy;toggled=>{NativeMemory.scope-changed();}}
+  SmithButton{text:"New memory";enabled:NativeMemory.can-create&&!NativeMemory.busy&&!NativeMemory.deleted;clicked=>{NativeMemory.new-memory();}}
+ }
+ if NativeMemory.status!="":Label{text:NativeMemory.status;}
+ HorizontalLayout{spacing:8px;
+  if NativeMemory.can-next:SmithButton{text:"Next 32";enabled:!NativeMemory.busy;clicked=>{NativeMemory.next();}}
+  if NativeMemory.can-undo:SmithButton{text:"Restore last trashed memory";enabled:!NativeMemory.busy;clicked=>{NativeMemory.undo-trash();}}
+ }
+ if NativeMemory.editor-open:VerticalLayout{spacing:6px;
+  Label{text:NativeMemory.editing?"Edit memory":"New memory";font-weight:600;}
+  Label{text:"Namespace";}
+  LineEdit{text<=>NativeMemory.create-namespace;enabled:!NativeMemory.busy&&!NativeMemory.editing;}
+  Label{text:"Memory text";}
+  TextEdit{text<=>NativeMemory.fact;min-height:100px;enabled:!NativeMemory.busy;}
+  Label{text:"Tags (one per line)";}
+  TextEdit{text<=>NativeMemory.tags;min-height:60px;enabled:!NativeMemory.busy;}
+  HorizontalLayout{spacing:8px;SmithButton{text:"Save memory";kind:"primary";enabled:!NativeMemory.busy;clicked=>{NativeMemory.save();}}SmithButton{text:"Close editor";enabled:!NativeMemory.busy;clicked=>{NativeMemory.editor-open=false;}}}
+ }
+}

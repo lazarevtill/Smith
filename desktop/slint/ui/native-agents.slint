@@ -1,0 +1,35 @@
+import { ComboBox } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck } from "theme.slint";
+export struct AgentOption { label:string, selected:bool }
+export global NativeAgents {
+ in-out property <bool> tasks-mode; in-out property <bool> show-deleted;
+ in property <bool> busy; in property <bool> available; in property <bool> deleted;
+ in property <[string]> workspaces; in property <[AgentOption]> capabilities; in property <[AgentOption]> resources;
+ in-out property <bool> instructions-open; in-out property <int> instructions-mode;
+ in property <[AgentOption]> instructions;
+ callback toggle-instruction(int);
+ in-out property <int> workspace-index:-1; in-out property <int> model-mode;
+ in property <string> model-detail; in property <string> status;
+ callback refresh();callback select-workspace(int);callback toggle-capability(int);callback toggle-resource(int);callback inspect-model();callback restore();
+}
+component Label inherits Text {font-family:Palette.font-body;font-size:12px;color:Palette.text-body;wrap:word-wrap;}
+export component NativeAgentScope inherits VerticalLayout {
+ spacing:8px;
+ Label{text:"Workspace";}
+ ComboBox{model:NativeAgents.workspaces;current-index<=>NativeAgents.workspace-index;enabled:!NativeAgents.busy&&!NativeAgents.deleted;selected=>{NativeAgents.select-workspace(self.current-index);}}
+ Label{text:"Model policy";}
+ ComboBox{model:["Use the selected local model at launch","Pin the reviewed local model"];current-index<=>NativeAgents.model-mode;enabled:!NativeAgents.busy&&!NativeAgents.deleted;}
+ HorizontalLayout{spacing:8px;SmithButton{text:"Review selected local model";enabled:!NativeAgents.busy;clicked=>{NativeAgents.inspect-model();}}Label{text:NativeAgents.model-detail;horizontal-stretch:1;}}
+ Label{text:"Permissions · choose a subset of this workspace";}
+ for option[index] in NativeAgents.capabilities: SmithCheck{text:option.label;checked:option.selected;enabled:!NativeAgents.busy&&!NativeAgents.deleted;toggled=>{NativeAgents.toggle-capability(index);}}
+ if NativeAgents.resources.length>0: Label{text:"Scoped resources";}
+ for option[index] in NativeAgents.resources: SmithCheck{text:option.label;checked:option.selected;enabled:!NativeAgents.busy&&!NativeAgents.deleted;toggled=>{NativeAgents.toggle-resource(index);}}
+ SmithCheck{text:"Instruction preferences";checked<=>NativeAgents.instructions-open;}
+ if NativeAgents.instructions-open:VerticalLayout{spacing:8px;
+  ComboBox{model:["Use enabled extensions at launch","No extensions","Use exact selected revisions"];current-index<=>NativeAgents.instructions-mode;enabled:!NativeAgents.busy&&!NativeAgents.deleted;}
+  if NativeAgents.instructions-mode==2:VerticalLayout{spacing:6px;for option[index] in NativeAgents.instructions:SmithCheck{text:option.label;checked:option.selected;enabled:!NativeAgents.busy&&!NativeAgents.deleted;toggled=>{NativeAgents.toggle-instruction(index);}}}
+  Label{text:"Saving changes preferences only. A later task captures its chosen instruction text without widening permissions.";}
+ }
+ if NativeAgents.deleted: SmithButton{text:"Restore agent";enabled:!NativeAgents.busy;clicked=>{NativeAgents.restore();}}
+ if NativeAgents.status!="": Label{text:NativeAgents.status;}
+}

@@ -1,0 +1,633 @@
+// Lazarev Cloud Design System — tokens + reusable widgets for the Smith UI.
+//
+// The system is monochrome at its core with a single hot-red signal (#f81a2c):
+// black & white do the heavy lifting; red marks the primary action / live
+// status. Corners are sharp — one 4px UI radius everywhere (pill is reserved for
+// toggle & meter tracks, full for discs). Type is Poppins (display), Inter
+// (body/UI) and Spline Sans Mono (labels, status, time, code).
+//
+// `Palette.dark` is flipped from Rust (`theme.rs` resolves the configured
+// `AppearanceMode`); only the semantic aliases change between light and dark, so
+// every widget that references them inherits the theme.
+
+export global Palette {
+    // Toggled from Rust. Defaults to dark (matching Theme::resolve's System).
+    in-out property <bool> dark: true;
+
+    // ---- Brand primitives ----
+    // `red` is settable from Rust so a user theme can override the brand accent;
+    // the derived accent / user-bubble brushes follow it.
+    in-out property <color> red: #f81a2c;
+    out property <color> red-hover: #ff3343;
+    out property <color> red-press: #c70f1e;
+    out property <color> black: #000000;
+    out property <color> white: #ffffff;
+
+    // ---- Neutral ink ramp (near-black → near-white) ----
+    out property <color> ink-900: #0a0a0b;
+    out property <color> ink-800: #161618;
+    out property <color> ink-700: #232327;
+    out property <color> ink-600: #3a3a40;
+    out property <color> ink-500: #5b5b63;
+    out property <color> ink-400: #8a8a92;
+    out property <color> ink-300: #b6b6bd;
+    out property <color> ink-200: #d9d9de;
+    out property <color> ink-100: #ececef;
+    out property <color> ink-50: #f6f6f7;
+
+    // ---- Semantic surfaces (flip on dark) ----
+    out property <brush> page: dark ? ink-900 : white;
+    out property <brush> raised: dark ? ink-800 : white;
+    out property <brush> sunken: dark ? #060607 : ink-50;
+    out property <brush> muted: dark ? ink-700 : ink-100;
+    out property <brush> hover: dark ? ink-700 : ink-100;
+    // The icon rail is always near-black, per the DS.
+    out property <brush> rail: dark ? black : ink-900;
+    out property <brush> rail-hover: ink-800;
+
+    // ---- Text ----
+    out property <brush> text-strong: dark ? white : black;
+    out property <brush> text-body: dark ? ink-200 : ink-800;
+    out property <brush> text-muted: dark ? ink-400 : ink-500;
+    out property <brush> text-subtle: dark ? ink-500 : ink-400;
+    out property <brush> text-on-accent: white;
+    out property <brush> text-on-rail: ink-400;
+
+    // ---- Lines ----
+    out property <brush> border: dark ? ink-700 : ink-200;
+    out property <brush> border-strong: dark ? white : black;
+
+    // ---- Accent / interactive ----
+    out property <brush> accent: red;
+    out property <brush> accent-hover: red-hover;
+    out property <brush> accent-press: red-press;
+
+    // ---- Status ----
+    out property <brush> success: #1f8f57;
+    out property <brush> warning: #b8791b;
+    out property <brush> info: #2f5fd0;
+    out property <brush> online: #1f8f57;
+
+    // ---- Chat bubbles ----
+    // DS ChatMessage spec: the user turn is a solid BLACK bubble (right-aligned);
+    // the assistant turn is full-width with the red logomark disc + mono name and
+    // NO bubble — so `assistant-bubble` is the page surface (kept for transition).
+    out property <brush> user-bubble: black;
+    out property <brush> user-text: white;
+    out property <brush> assistant-bubble: dark ? ink-800 : white;
+    out property <brush> assistant-text: dark ? ink-200 : black;
+
+    // ---- Type families ----
+    out property <string> font-display: "Poppins";
+    out property <string> font-body: "Inter";
+    out property <string> font-mono: "Spline Sans Mono";
+
+    // ---- Rhythm ----
+    out property <length> radius: 4px; // the only UI corner radius
+    out property <length> radius-pill: 999px;
+    out property <length> gap: 8px;
+}
+
+// The primary action button. Sharp, confident, monochrome-first; red is reserved
+// for the primary variant. `kind`: "primary" (red) | "secondary" (outline) |
+// "ghost" (bare) | "destructive" (black).
+export component SmithButton inherits Rectangle {
+    in property <string> text;
+    in property <string> kind: "secondary";
+    in property <bool> enabled: true;
+    callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { if root.enabled { root.clicked(); } }
+    forward-focus: button-focus;
+
+    property <bool> key-down: false;
+    button-focus := FocusScope {
+        enabled: root.enabled;
+        changed has-focus => { if !self.has-focus { root.key-down = false; } }
+        key-pressed(event) => {
+            if root.enabled && (event.text == Key.Return || event.text == " ") {
+                root.key-down = true;
+                return accept;
+            }
+            return reject;
+        }
+        key-released(event) => {
+            if event.text == Key.Return || event.text == " " {
+                if root.enabled && root.key-down { root.clicked(); }
+                root.key-down = false;
+                return accept;
+            }
+            return reject;
+        }
+    }
+
+    property <bool> is-primary: root.kind == "primary";
+    property <bool> is-destructive: root.kind == "destructive";
+    property <bool> is-ghost: root.kind == "ghost";
+
+    height: 36px;
+    border-radius: Palette.radius;
+    border-width: (is-primary || is-destructive || is-ghost) ? 0px : 2px;
+    border-color: Palette.border-strong;
+    background:
+        is-primary ? (ta.has-hover ? Palette.accent-hover : Palette.accent)
+        : is-destructive ? (ta.has-hover ? Palette.accent : Palette.black)
+        : (ta.has-hover ? Palette.hover : transparent);
+    opacity: root.enabled ? 1.0 : 0.4;
+    animate background { duration: 120ms; }
+
+    if button-focus.has-focus: Rectangle {
+        x: -3px;
+        y: -3px;
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: Palette.radius + 2px;
+        border-width: 1px;
+        border-color: Palette.accent;
+        background: transparent;
+    }
+
+    Text {
+        x: 14px;
+        width: parent.width - 28px;
+        height: parent.height;
+        text: root.text;
+        color: (is-primary || is-destructive) ? Palette.text-on-accent : Palette.text-strong;
+        font-family: Palette.font-body;
+        font-size: 13px;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            if (root.enabled) {
+                button-focus.focus();
+                root.clicked();
+            }
+        }
+    }
+}
+
+// A destructive action that requires a second click before it fires — the
+// two-step delete-confirm pattern used everywhere a one-click instant delete
+// used to live (agents, skills, methods, recipes, MCP servers, schedules,
+// watchers). Mirrors the chat-session delete-confirm inline text ("Delete
+// chat?" + Delete/Cancel) but self-contained, so callers just wire
+// `confirmed()` instead of owning their own confirming-row state.
+//
+// `reset-key` should be bound to the row's stable identity (e.g. `item.id`)
+// when used inside a `for` loop: list delegates can be recycled for a
+// different row on reorder/add/remove, and the `changed` callback below
+// disarms a stale confirm rather than letting it silently apply to whatever
+// item now occupies that slot.
+export component ConfirmButton inherits HorizontalLayout {
+    in property <string> label: "Remove";
+    in property <string> kind: "secondary"; // idle-state SmithButton kind
+    in property <string> confirm-text: "Delete?";
+    in property <string> reset-key: "";
+    // Disables the whole control (idle + both confirm-step buttons) — for a
+    // delete paired with an editable entity, gate this on the entity's own
+    // in-flight-save flag so Delete can't race a Save still writing the row.
+    in property <bool> enabled: true;
+    property <bool> confirming: false;
+    callback confirmed();
+    changed reset-key => { root.confirming = false; }
+
+    spacing: 8px;
+
+    if !root.confirming: SmithButton {
+        text: root.label;
+        kind: root.kind;
+        width: 100px;
+        enabled: root.enabled;
+        clicked => { root.confirming = true; }
+    }
+    if root.confirming: VerticalLayout {
+        alignment: center;
+        Text {
+            text: root.confirm-text;
+            color: Palette.text-strong;
+            font-family: Palette.font-body;
+            font-size: 12.5px;
+        }
+    }
+    if root.confirming: SmithButton {
+        text: "Delete";
+        kind: "destructive";
+        width: 80px;
+        enabled: root.enabled;
+        clicked => {
+            root.confirming = false;
+            root.confirmed();
+        }
+    }
+    if root.confirming: SmithButton {
+        text: "Cancel";
+        kind: "ghost";
+        width: 76px;
+        clicked => { root.confirming = false; }
+    }
+}
+
+// A branded checkbox: a sharp 18px box that fills with the red accent + a check
+// glyph when on. Replaces the std `CheckBox` so toggles match the Lazarev Cloud
+// brand and the light/dark Palette — the std widget renders a Fluent-blue accent
+// that ignores `Palette` and breaks in light mode. `checked` is two-way
+// bindable; `toggled()` fires after each user flip (for persist-on-change).
+export component SmithCheck inherits Rectangle {
+    in property <string> text;
+    in-out property <bool> checked;
+    in property <bool> enabled: true;
+    callback toggled();
+
+    height: 28px;
+    horizontal-stretch: 0;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        Rectangle {
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Palette.radius;
+            border-width: 1px;
+            border-color: root.checked ? Palette.accent : Palette.border;
+            background: root.checked ? Palette.accent : transparent;
+            animate background, border-color { duration: 100ms; }
+            Text {
+                text: "✓";
+                visible: root.checked;
+                color: Palette.text-on-accent;
+                font-size: 12px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            color: Palette.text-body;
+            font-family: Palette.font-body;
+            font-size: 14px;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.checked = !root.checked;
+            root.toggled();
+        }
+    }
+}
+
+// A branded radio button: a circular ring with a red fill dot when selected.
+// Use for single-select-among-visible-options groups where exactly one stays on
+// (e.g. a language pick) — the round shape is what distinguishes it from the
+// square `SmithCheck` (independent on/off toggles). Driven one-way by `selected`
+// and emitting `picked()`; the parent owns the mutual exclusion, so the control
+// never fights its own bound state.
+export component SmithRadio inherits Rectangle {
+    in property <string> text;
+    in property <bool> selected;
+    in property <bool> enabled: true;
+    callback picked();
+
+    height: 28px;
+    horizontal-stretch: 0;
+    opacity: root.enabled ? 1.0 : 0.4;
+
+    HorizontalLayout {
+        spacing: 10px;
+        alignment: start;
+        Rectangle {
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 9px;
+            border-width: 1px;
+            border-color: root.selected ? Palette.accent : Palette.border;
+            background: transparent;
+            animate border-color { duration: 100ms; }
+            // Inner fill dot (centered) — the radio's "on" state.
+            Rectangle {
+                width: 10px;
+                height: 10px;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                border-radius: 5px;
+                background: Palette.accent;
+                visible: root.selected;
+            }
+        }
+        Text {
+            text: root.text;
+            vertical-alignment: center;
+            color: Palette.text-body;
+            font-family: Palette.font-body;
+            font-size: 14px;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => { root.picked(); }
+    }
+}
+
+// A vertical icon-rail navigation button: a tintable line icon, ghost by
+// default, with a red left bar when active (the DS rail affordance).
+//
+// Accessibility / discoverability: the rail is icon-only by DS (44px square,
+// no room for an always-visible caption without breaking the 64px rail
+// width), so each button carries a `label` (its destination) that is both
+// the assistive-tech `accessible-label` and the text of a hover-delay
+// tooltip. A true delayed tooltip is directly supported in this Slint
+// version (1.17 ships a builtin `Tooltip` element — hover-delay, auto
+// positioning, auto hide-on-leave, all handled by the compiler/runtime), so
+// that's the chosen affordance over an always-visible label.
+export component RailButton inherits Rectangle {
+    in property <image> icon;
+    in property <string> label: "";
+    in property <bool> active: false;
+    in property <bool> enabled: true;
+    // A small red dot in the corner — something in that destination is live
+    // or needs input (e.g. a running/needs-clarification Activity task).
+    in property <bool> show-badge: false;
+    callback clicked();
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-enabled: root.enabled;
+    accessible-action-default => { root.clicked(); }
+
+    width: 44px;
+    height: 44px;
+    border-radius: Palette.radius;
+    background: root.active || ta.has-hover ? Palette.rail-hover : transparent;
+    animate background { duration: 120ms; }
+
+    // Red active indicator bar.
+    Rectangle {
+        x: -14px;
+        y: 10px;
+        width: 3px;
+        height: parent.height - 20px;
+        border-radius: 2px;
+        background: Palette.accent;
+        opacity: root.active ? 1.0 : 0.0;
+        animate opacity { duration: 120ms; }
+    }
+
+    Image {
+        source: root.icon;
+        width: 20px;
+        height: 20px;
+        colorize: root.active ? Palette.white : Palette.text-on-rail;
+    }
+
+    if root.show-badge: Rectangle {
+        x: parent.width - 12px;
+        y: 2px;
+        width: 8px;
+        height: 8px;
+        border-radius: 4px;
+        background: Palette.red;
+        border-width: 1.5px;
+        border-color: Palette.rail;
+    }
+
+    if root.label != "": Tooltip {
+        text: @markdown("\{root.label}");
+    }
+
+    ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: pointer;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+// A compact status pill: an optional colored dot + a mono label. Used in the
+// thread header for the server address and active model.
+export component StatusPill inherits Rectangle {
+    in property <string> text;
+    in property <bool> show-dot: false;
+    in property <brush> dot-color: Palette.online;
+
+    height: 26px;
+    border-radius: Palette.radius;
+    border-width: 1px;
+    border-color: Palette.border;
+    background: Palette.raised;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 7px;
+
+        if root.show-dot: VerticalLayout {
+            alignment: center;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                border-radius: 3.5px;
+                background: root.dot-color;
+            }
+        }
+        Text {
+            text: root.text;
+            color: Palette.text-muted;
+            font-family: Palette.font-mono;
+            font-size: 11px;
+            letter-spacing: 0.3px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// A round avatar disc with initials (DS uses red or black tones).
+export component Avatar inherits Rectangle {
+    in property <string> initials;
+    in property <bool> red-tone: false;
+    in property <length> diameter: 40px;
+
+    width: root.diameter;
+    height: root.diameter;
+    border-radius: root.diameter / 2;
+    background: root.red-tone ? Palette.red : Palette.ink-700;
+
+    Text {
+        text: root.initials;
+        color: Palette.white;
+        font-family: Palette.font-mono;
+        font-size: root.diameter * 0.34;
+        font-weight: 600;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
+
+// A small uppercase mono section label (the DS "seclbl" affordance).
+export component SectionLabel inherits Text {
+    font-family: Palette.font-mono;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    color: Palette.text-subtle;
+}
+
+// A status banner (info / warning / error): a soft card with a colored left bar
+// and a status dot. Used for inline guidance and the LAN-exposure warning.
+export component Banner inherits Rectangle {
+    in property <string> text;
+    in property <string> kind: "warning"; // "info" | "warning" | "error"
+    property <brush> tone: root.kind == "error"
+        ? Palette.red
+        : (root.kind == "info" ? Palette.info : Palette.warning);
+
+    border-radius: Palette.radius;
+    background: Palette.sunken;
+    border-width: 1px;
+    border-color: Palette.border;
+    height: inner.preferred-height;
+
+    inner := HorizontalLayout {
+        padding: 11px;
+        spacing: 10px;
+        // Colored left bar (stretches to the banner height).
+        Rectangle {
+            width: 4px;
+            border-radius: 2px;
+            background: root.tone;
+        }
+        Rectangle {
+            width: 7px;
+            height: 7px;
+            y: 4px;
+            border-radius: 3.5px;
+            background: root.tone;
+        }
+        Text {
+            text: root.text;
+            color: Palette.text-body;
+            font-family: Palette.font-body;
+            font-size: 12.5px;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+        }
+    }
+}
+
+// Centered empty-state placeholder: a muted icon, a title, and a hint line.
+// Pass an `Icons.<name>` as `icon`.
+export component EmptyState inherits VerticalLayout {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> message;
+    alignment: center;
+    spacing: 8px;
+    HorizontalLayout {
+        alignment: center;
+        Image {
+            source: root.icon;
+            width: 30px;
+            height: 30px;
+            colorize: Palette.text-subtle;
+        }
+    }
+    Text {
+        text: root.title;
+        color: Palette.text-strong;
+        font-family: Palette.font-display;
+        font-size: 16px;
+        font-weight: 600;
+        horizontal-alignment: center;
+    }
+    Text {
+        text: root.message;
+        color: Palette.text-muted;
+        font-family: Palette.font-body;
+        font-size: 13px;
+        horizontal-alignment: center;
+        wrap: word-wrap;
+    }
+}
+
+// A copyable mono value (command / path / port / key) with a one-click Copy that
+// flips to a "Copied ✓" confirmation. Wire `copy` to the clipboard.
+export component CopyBlock inherits Rectangle {
+    in property <string> value;
+    callback copy(string);
+    property <bool> copied: false;
+
+    border-radius: Palette.radius;
+    border-width: 1px;
+    border-color: Palette.border;
+    background: Palette.sunken;
+    height: row.preferred-height;
+
+    row := HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 8px;
+        Text {
+            text: root.value;
+            color: Palette.text-body;
+            font-family: Palette.font-mono;
+            font-size: 12px;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        Rectangle {
+            width: cp-txt.preferred-width + 20px;
+            height: 26px;
+            border-radius: Palette.radius;
+            border-width: 1px;
+            border-color: Palette.border;
+            background: cp-ta.has-hover ? Palette.hover : transparent;
+            cp-txt := Text {
+                text: root.copied ? "Copied ✓" : "Copy";
+                color: root.copied ? Palette.success : Palette.text-body;
+                font-family: Palette.font-mono;
+                font-size: 11px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+            cp-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.copy(root.value);
+                    root.copied = true;
+                    reset.running = true;
+                }
+            }
+        }
+    }
+
+    reset := Timer {
+        interval: 1400ms;
+        running: false;
+        triggered => {
+            root.copied = false;
+            self.running = false;
+        }
+    }
+}

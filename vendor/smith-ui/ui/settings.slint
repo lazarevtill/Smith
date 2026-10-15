@@ -1,0 +1,1232 @@
+// Settings window — framed in the Lazarev Cloud design system.
+//
+// A left tab rail and a scrolling pane of grouped setting cards. Every control
+// here is backed by `AppConfiguration` and persisted by the Rust bridge on
+// change (see `smith-ui/src/lib.rs::persist_settings`).
+
+import { LineEdit, ComboBox, ScrollView, TextEdit } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck, SmithRadio, Banner, SectionLabel, EmptyState, CopyBlock } from "theme.slint";
+import { Icons } from "icons.slint";
+
+// One configured MCP server row.
+export struct McpItem {
+    id: string,
+    name: string,
+    detail: string,
+}
+
+// A reusable skill row.
+export struct SkillItem {
+    id: string,
+    name: string,
+    detail: string,
+    enabled: bool,
+}
+
+// A learned-workflow (method) row.
+export struct MethodItem {
+    id: string,
+    name: string,
+    detail: string,
+    enabled: bool,
+}
+
+// A plugin tool-recipe row.
+export struct RecipeItem {
+    id: string,
+    name: string,
+    detail: string,
+    enabled: bool,
+}
+
+// A privacy-filter redaction detection (for the review surface).
+export struct DetectionItem {
+    kind: string,
+    placeholder: string,
+    preview: string,
+}
+
+// A scheduled-task row.
+export struct ScheduleItem {
+    id: string,
+    name: string,
+    detail: string,
+    enabled: bool,
+}
+
+// A filesystem-watch row.
+export struct WatcherItem {
+    id: string,
+    name: string,
+    detail: string,
+    enabled: bool,
+}
+
+// A recalled memory episode row.
+export struct MemoryItem {
+    // "" for a row that predates per-row actions (shouldn't happen in
+    // practice — every episode has an id — but keeps this struct's other
+    // callers, if any, from having to supply one). Non-empty enables the
+    // delete/pin row actions (P2 "Memory management").
+    id: string,
+    summary: string,
+    meta: string,
+    pinned: bool,
+}
+
+// A grouped setting card: title + description + slotted control(s).
+component Card inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    border-radius: Palette.radius;
+    background: Palette.raised;
+    border-width: 1px;
+    border-color: Palette.border;
+    VerticalLayout {
+        alignment: start;
+        padding: 16px;
+        spacing: 10px;
+        if root.title != "": Text {
+            text: root.title;
+            color: Palette.text-strong;
+            font-family: Palette.font-body;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        if root.description != "": Text {
+            text: root.description;
+            color: Palette.text-muted;
+            font-family: Palette.font-body;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        @children
+    }
+}
+
+// One row in the grouped settings rail: a label bound to a fixed tab index,
+// with the DS active treatment (muted fill + red left bar).
+component TabRow inherits Rectangle {
+    in property <string> label;
+    in property <int> index;
+    in property <int> active-index;
+    callback picked(int);
+    property <bool> active: root.index == root.active-index;
+    height: 34px;
+    border-radius: Palette.radius;
+    background: root.active ? Palette.muted : (ta.has-hover ? Palette.hover : transparent);
+    animate background { duration: 100ms; }
+    Rectangle {
+        x: 0;
+        y: 7px;
+        width: 3px;
+        height: parent.height - 14px;
+        border-radius: 2px;
+        background: Palette.accent;
+        opacity: root.active ? 1.0 : 0.0;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.picked(root.index); }
+    }
+    Text {
+        x: 14px;
+        vertical-alignment: center;
+        text: root.label;
+        color: root.active ? Palette.text-strong : Palette.text-body;
+        font-family: Palette.font-body;
+        font-size: 13px;
+        font-weight: root.active ? 600 : 500;
+    }
+}
+
+// A collapsed-by-default disclosure header for advanced/technical controls.
+// No reusable collapsible exists in theme.slint, so this is a minimal
+// boolean-toggle-driven fallback local to the settings view: a clickable
+// row (chevron + label) that flips `expanded`; callers gate their advanced
+// content behind `if section.expanded: ...`.
+component DisclosureHeader inherits Rectangle {
+    in property <string> label: "Advanced";
+    in-out property <bool> expanded: false;
+    height: 30px;
+    border-radius: Palette.radius;
+    background: ta.has-hover ? Palette.hover : transparent;
+    animate background { duration: 100ms; }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.expanded = !root.expanded; }
+    }
+    HorizontalLayout {
+        padding-left: 6px;
+        spacing: 8px;
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: root.expanded ? @image-url("../assets/icons/chevron-down.svg") : @image-url("../assets/icons/chevron-right.svg");
+                width: 12px;
+                height: 12px;
+                colorize: Palette.text-subtle;
+            }
+        }
+        Text {
+            text: root.label;
+            color: Palette.text-muted;
+            font-family: Palette.font-body;
+            font-size: 12px;
+            font-weight: 600;
+            vertical-alignment: center;
+        }
+    }
+}
+
+// Disclosure for a restart-required setting (port, LAN exposure, execution
+// provider, provider keys): a "takes effect after restart" note plus a
+// Restart-now affordance, so the user isn't left guessing why a change
+// didn't do anything — mirrors the text-only pattern the learning-loop
+// toggles already use, but adds the actual relaunch action those don't need
+// (a background loop's *next scheduled run* just picks up the new interval;
+// these settings are read once at process startup and otherwise never
+// re-checked).
+component RestartNotice inherits VerticalLayout {
+    callback restart();
+    // Surfaced when `relaunch()` itself fails (e.g. the OS refuses to spawn
+    // a second copy of the binary) — previously that failure was only
+    // `tracing::error!`-logged and the button silently did nothing visible,
+    // leaving the user to wonder whether their click registered at all.
+    in property <string> error: "";
+    spacing: 6px;
+    Text {
+        text: "Takes effect after restart.";
+        color: Palette.text-muted;
+        font-family: Palette.font-body;
+        font-size: 12px;
+    }
+    if root.error != "": Banner {
+        kind: "error";
+        text: root.error;
+    }
+    HorizontalLayout {
+        SmithButton {
+            text: "Restart now";
+            kind: "secondary";
+            width: 140px;
+            clicked => { root.restart(); }
+        }
+        Rectangle { horizontal-stretch: 1; }
+    }
+}
+
+// An embeddable settings panel (a view inside the main window, not its own
+// Window). All controls are backed by `AppConfiguration` and persisted by the
+// Rust bridge on change.
+export component SettingsView inherits Rectangle {
+    background: Palette.page;
+
+    // Index of the active tab (matches the order of `tab-titles`).
+    in-out property <int> active-tab: 0;
+    changed active-tab => { settings-scroll.viewport-y = 0px; }
+    in property <[string]> tab-titles: ["General", "Server", "Models", "Inference", "Providers", "Privacy", "Metrics", "About"];
+    // Live performance metrics (tokens/sec, TTFT) from the metrics log.
+    in property <string> metrics-summary;
+    in property <[string]> metrics-rows;
+    callback refresh-metrics();
+
+    // --- About / diagnostics -----------------------------------------------
+    in property <string> app-version: "";
+    in property <string> hardware-summary: "";
+    // Export a support zip (version, hardware/GPU-NPU report, app log) — see
+    // `smith-ui::bridge::build_diagnostics_zip`. Deliberately never includes
+    // the SQLCipher DB, artifacts, or config.json (provider API keys).
+    in-out property <bool> diagnostics-exporting: false;
+    callback export-diagnostics();
+
+    // --- General ----------------------------------------------------------
+    in property <[string]> appearance-modes: ["System", "Light", "Dark"];
+    in-out property <string> appearance: "System";
+    in-out property <bool> start-at-login: false;
+    in-out property <bool> tray-only: false;
+    in-out property <bool> telemetry-enabled: false;
+    in-out property <string> collect-endpoint;
+    in-out property <string> collect-token;
+    in-out property <string> collect-error;
+    in-out property <bool> crash-reporting-enabled: false;
+    in property <string> artifacts-dir: "";
+    // Non-empty while a relocation (move-then-repoint) is running or just
+    // finished; the "Move…" button disables itself while busy so a second
+    // click can't start an overlapping move.
+    in property <string> artifacts-dir-status: "";
+    in property <bool> artifacts-dir-busy: false;
+    // True when `artifacts-dir-status` is reporting a failure (not a
+    // success) — colors the status line red instead of green.
+    in property <bool> artifacts-dir-error: false;
+    // Files copied so far / total, 0.0..=1.0, while `artifacts-dir-busy`.
+    in property <float> artifacts-dir-progress: 0.0;
+    // A folder has been picked but the move hasn't been confirmed yet — ""
+    // means no pending pick (see `change-artifacts-dir`'s doc comment below).
+    in property <string> artifacts-dir-pending: "";
+    in property <string> artifacts-dir-pending-free: "";
+    in property <bool> artifacts-dir-pending-low-disk: false;
+
+    // --- Server -----------------------------------------------------------
+    in-out property <string> port-text: "1337";
+    // Was previously dropped with only a `tracing::warn!` on an invalid
+    // value (the field just silently kept its old port) — now surfaced here.
+    in property <string> port-error: "";
+    in-out property <bool> expose-to-network: false;
+    // Node identity + access key (P2 "Access key + node identity").
+    in property <string> node-address: "";
+    // "" until "Generate access key" is pressed.
+    in property <string> node-access-key: "";
+    in property <string> access-key-error: "";
+    callback generate-access-key();
+    callback copy-message(string);
+
+    // --- Models -----------------------------------------------------------
+    in property <[string]> models: [];
+    in-out property <string> default-model: "";
+    in property <string> models-dir: "";
+
+    // --- Inference --------------------------------------------------------
+    in property <[string]> exec-providers: ["Auto", "DirectML", "CUDA", "OpenVINO (Intel)", "QNN (Qualcomm)", "Vitis AI (AMD)", "CPU"];
+    in-out property <string> execution-provider: "Auto";
+    in property <[string]> reasoning-levels: ["Off", "Low", "Medium", "High"];
+    in-out property <string> reasoning-effort: "Medium";
+    // Voice interaction language for speech-to-text: "en", "ru", or "mixed".
+    in-out property <string> voice-language: "en";
+    // Background Morgan learning loops. Consolidation is recommended on (it
+    // bounds memory growth and runs no inference); the rest are heavier,
+    // opt-in background inference.
+    in-out property <bool> consolidate-enabled: true;
+    in-out property <bool> reflect-enabled: false;
+    in-out property <bool> soul-evolve-enabled: false;
+    in-out property <bool> memory-summarizer-enabled: false;
+
+    // --- Privacy ----------------------------------------------------------
+    in property <[string]> privacy-modes: ["Off", "Review", "Enforce"];
+    in-out property <string> privacy-mode: "Review";
+    in-out property <string> privacy-test-input;
+    in property <[DetectionItem]> privacy-detections;
+    in property <bool> privacy-tested: false;
+    // Computer-use autonomy policy (P2 "computer-use: currently inert —
+    // decide"). Read once at startup by `smith-runtime`, like the execution
+    // provider — changes need a restart (see the `RestartNotice` below).
+    in property <[string]> computer-use-policies: ["Locked", "Read-only", "Assisted", "Full"];
+    in-out property <string> computer-use-policy: "Read-only";
+
+    // --- Sandbox (WSL2) ---------------------------------------------------
+    in property <string> sandbox-status: "Checking…";
+    // Busy while "Check & provision" is running — installing the baseline
+    // WSL2 toolchain is a real shell round-trip that can take a while (it
+    // was previously left clickable the whole time, inviting a second,
+    // overlapping provisioning run).
+    in property <bool> sandbox-provisioning: false;
+
+    // --- Providers (cloud API keys) ---------------------------------------
+    in-out property <string> openai-key;
+    in-out property <string> anthropic-key;
+    in-out property <string> gemini-key;
+    in-out property <string> openrouter-key;
+    // LM Studio's local OpenAI-compatible server doesn't require a key, but
+    // honors an optional Bearer token if one is configured.
+    in-out property <string> lmstudio-key;
+    in-out property <string> local-openai-endpoint;
+    in property <string> local-openai-error;
+    in-out property <string> winml-key;
+    in-out property <string> winml-endpoint;
+
+    // Fired when any setting changes; the Rust bridge persists AppConfiguration.
+    callback setting-changed();
+    // Open the dedicated model-browser window (Models tab).
+    callback open-model-browser();
+    callback change-models-dir();
+    // Pick a new artifacts folder — shows it as *pending* (with a free-space
+    // check) but does not start moving anything; the user must separately
+    // fire `confirm-artifacts-move()`. Two-step because, unlike
+    // `change-models-dir` (an instant, low-risk pointer flip), this
+    // physically moves every existing artifact.
+    callback change-artifacts-dir();
+    callback confirm-artifacts-move();
+    callback cancel-artifacts-move();
+    callback select-tab(int);
+    callback test-redaction();
+    callback provision-sandbox();
+    // Relaunches Smith (spawns a fresh process, then quits this one) so a
+    // restart-required setting (port, LAN exposure, execution provider,
+    // provider keys) takes effect without the user having to find Smith in
+    // the tray and quit it manually. The id names which `RestartNotice`
+    // triggered it, so Rust can set only that card's own error property —
+    // see the five distinct `restart-error-*` properties below: the Server
+    // tab's Port and Network-exposure cards both live under the same
+    // "Advanced" disclosure and render simultaneously once expanded, so a
+    // single shared error string would show the wrong (or a duplicated)
+    // failure under whichever card the user didn't click.
+    callback restart-now(string);
+    in property <string> restart-error-port: "";
+    in property <string> restart-error-network: "";
+    in property <string> restart-error-execution-provider: "";
+    in property <string> restart-error-computer-use: "";
+    in property <string> restart-error-providers: "";
+
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0;
+
+        // --- Left: tab rail --------------------------------------------------
+        Rectangle {
+            width: 196px;
+            background: Palette.sunken;
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Palette.border;
+            }
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+
+                Text {
+                    text: "Settings";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+
+                // Grouped, scannable categories (replaces the flat 14-tab strip).
+                // Tab indices are preserved so the content panes stay wired.
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        alignment: start;
+                        spacing: 14px;
+                        VerticalLayout {
+                            spacing: 3px;
+                            SectionLabel { text: "APPLICATION"; }
+                            TabRow { label: "General"; index: 0; active-index: root.active-tab; picked(i) => { root.active-tab = i; root.select-tab(i); } }
+                            TabRow { label: "Server"; index: 1; active-index: root.active-tab; picked(i) => { root.active-tab = i; root.select-tab(i); } }
+                            TabRow { label: "Models"; index: 2; active-index: root.active-tab; picked(i) => { root.active-tab = i; root.select-tab(i); } }
+                        }
+                        VerticalLayout {
+                            spacing: 3px;
+                            SectionLabel { text: "AI"; }
+                            TabRow { label: "Inference"; index: 3; active-index: root.active-tab; picked(i) => { root.active-tab = i; root.select-tab(i); } }
+                            TabRow { label: "Providers"; index: 4; active-index: root.active-tab; picked(i) => { root.active-tab = i; root.select-tab(i); } }
+                        }
+                        VerticalLayout {
+                            spacing: 3px;
+                            SectionLabel { text: "PRIVACY & DATA"; }
+                            TabRow { label: "Privacy"; index: 5; active-index: root.active-tab; picked(i) => { root.active-tab = i; root.select-tab(i); } }
+                        }
+                        VerticalLayout {
+                            spacing: 3px;
+                            SectionLabel { text: "ABOUT"; }
+                            TabRow { label: "Metrics"; index: 6; active-index: root.active-tab; picked(i) => { root.active-tab = i; root.select-tab(i); } }
+                            TabRow { label: "About"; index: 7; active-index: root.active-tab; picked(i) => { root.active-tab = i; root.select-tab(i); } }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Right: active pane ----------------------------------------------
+        settings-scroll := ScrollView {
+            VerticalLayout {
+                alignment: start;
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: root.tab-titles[root.active-tab];
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 22px;
+                    font-weight: 600;
+                }
+
+                // ===== General =====
+                if root.active-tab == 0: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Appearance";
+                        description: "Match Windows, or force a light or dark theme.";
+                        HorizontalLayout {
+                            ComboBox {
+                                width: 200px;
+                                model: root.appearance-modes;
+                                current-value <=> root.appearance;
+                                selected => { root.setting-changed(); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    Card {
+                        title: "Startup & window";
+                        VerticalLayout {
+                            spacing: 14px;
+                            VerticalLayout {
+                                spacing: 4px;
+                                SmithCheck {
+                                    text: "Start Smith at Windows login";
+                                    checked <=> root.start-at-login;
+                                    toggled => { root.setting-changed(); }
+                                }
+                                Text {
+                                    text: "Launch automatically when you sign in to Windows.";
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            VerticalLayout {
+                                spacing: 4px;
+                                SmithCheck {
+                                    text: "Tray only (no taskbar entry)";
+                                    checked <=> root.tray-only;
+                                    toggled => { root.setting-changed(); }
+                                }
+                                Text {
+                                    text: "Run quietly from the notification area.";
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Artifacts storage location";
+                        description: "Where saved transcripts, generated images, and other artifacts are kept, encrypted at rest. Moving this physically relocates everything already saved — nothing is left behind. (See also Models → Storage location, a separate setting for model weights.)";
+                        VerticalLayout {
+                            spacing: 8px;
+                            // Captioned to match the pending-destination box
+                            // below it — otherwise, while both are visible
+                            // during the pending state, they're two
+                            // identical-looking gray boxes with nothing but
+                            // a caption on the SECOND one distinguishing
+                            // "current" from "destination".
+                            Text {
+                                text: "Current location:";
+                                color: Palette.text-muted;
+                                font-family: Palette.font-body;
+                                font-size: 12px;
+                            }
+                            Rectangle {
+                                height: 34px;
+                                border-radius: 4px;
+                                background: Palette.sunken;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                Text {
+                                    x: 10px;
+                                    width: parent.width - 20px;
+                                    vertical-alignment: center;
+                                    text: root.artifacts-dir;
+                                    color: Palette.text-body;
+                                    font-family: Palette.font-mono;
+                                    font-size: 11px;
+                                    overflow: elide;
+                                }
+                            }
+
+                            // A folder was picked but not confirmed yet: show
+                            // where it would go, a free-space check, and an
+                            // explicit confirm/cancel pair — moving physically
+                            // relocates every existing artifact, so this
+                            // doesn't start on the folder-picker click alone.
+                            if root.artifacts-dir-pending != "": VerticalLayout {
+                                spacing: 8px;
+                                Text {
+                                    text: "Move artifacts to:";
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                }
+                                Rectangle {
+                                    height: 34px;
+                                    border-radius: 4px;
+                                    background: Palette.sunken;
+                                    border-width: 2px;
+                                    border-color: Palette.accent;
+                                    Text {
+                                        x: 10px;
+                                        width: parent.width - 20px;
+                                        vertical-alignment: center;
+                                        text: root.artifacts-dir-pending;
+                                        color: Palette.text-body;
+                                        font-family: Palette.font-mono;
+                                        font-size: 11px;
+                                        overflow: elide;
+                                    }
+                                }
+                                if root.artifacts-dir-pending-free != "": Text {
+                                    text: root.artifacts-dir-pending-free;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 11px;
+                                }
+                                if root.artifacts-dir-pending-low-disk: Banner {
+                                    kind: "warning";
+                                    text: "This drive may not have enough free space for everything currently stored. The move fails safely (nothing is touched) if it doesn't fit — a roomier destination avoids the wait.";
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    SmithButton {
+                                        text: "Move Here";
+                                        kind: "primary";
+                                        width: 120px;
+                                        enabled: root.artifacts-dir-pending != "" && !root.artifacts-dir-busy;
+                                        clicked => { root.confirm-artifacts-move(); }
+                                    }
+                                    SmithButton {
+                                        text: "Cancel";
+                                        kind: "secondary";
+                                        width: 90px;
+                                        clicked => { root.cancel-artifacts-move(); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                            }
+
+                            // While a move is running: live file-count progress.
+                            if root.artifacts-dir-busy: VerticalLayout {
+                                spacing: 6px;
+                                Text {
+                                    text: root.artifacts-dir-status;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                                Rectangle {
+                                    height: 6px;
+                                    border-radius: 3px;
+                                    background: Palette.border;
+                                    Rectangle {
+                                        x: 0;
+                                        height: parent.height;
+                                        width: parent.width * clamp(root.artifacts-dir-progress, 0.0, 1.0);
+                                        border-radius: 3px;
+                                        background: Palette.accent;
+                                        animate width { duration: 200ms; }
+                                    }
+                                }
+                            }
+
+                            // After a move finishes (success or failure) and
+                            // no new pick is pending: the result, colored by
+                            // outcome so a failure never looks like success.
+                            if !root.artifacts-dir-busy && root.artifacts-dir-pending == "" && root.artifacts-dir-status != "": Text {
+                                text: root.artifacts-dir-status;
+                                color: root.artifacts-dir-error ? Palette.red : Palette.success;
+                                font-family: Palette.font-body;
+                                font-size: 12px;
+                                wrap: word-wrap;
+                            }
+
+                            if root.artifacts-dir-pending == "": HorizontalLayout {
+                                SmithButton {
+                                    text: root.artifacts-dir-busy ? "Moving…" : "Move…";
+                                    kind: "secondary";
+                                    width: 140px;
+                                    enabled: !root.artifacts-dir-busy;
+                                    clicked => { root.change-artifacts-dir(); }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Updates and diagnostics";
+                        description: "Optional service URL. Checks for updates on launch. Diagnostics require your consent. URL and token changes apply after restarting Smith.";
+                        VerticalLayout {
+                            spacing: 10px;
+                            Text { text: "Service URL (leave blank to stay offline)"; color: Palette.text-body; font-family: Palette.font-body; font-size: 13px; wrap: word-wrap; }
+                            LineEdit {
+                                placeholder-text: "https://collect.example.com";
+                                text <=> root.collect-endpoint;
+                                edited => { root.setting-changed(); }
+                            }
+                            if root.collect-error != "": Banner { kind: "error"; text: root.collect-error; }
+                            LineEdit {
+                                input-type: password;
+                                placeholder-text: "Ingest token (only if your server requires one)";
+                                text <=> root.collect-token;
+                                edited => { root.setting-changed(); }
+                            }
+                            Text { text: "Includes token counts, response timing and error code locations. Prompts, replies, model names and file paths are excluded. Crash reports also require usage metrics below."; color: Palette.text-muted; font-family: Palette.font-body; font-size: 12px; wrap: word-wrap; }
+                            SmithCheck {
+                                text: "Send usage metrics and error diagnostics";
+                                checked <=> root.telemetry-enabled;
+                                toggled => { root.setting-changed(); }
+                            }
+                            SmithCheck {
+                                text: "Send crash reports";
+                                checked <=> root.crash-reporting-enabled;
+                                toggled => { root.setting-changed(); }
+                            }
+                        }
+                    }
+                }
+
+                // ===== Server =====
+                if root.active-tab == 1: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "WSL2 sandbox";
+                        description: "Tool/shell execution runs inside WSL2. Provision installs the baseline toolchain (bash, python3, node, git).";
+                        VerticalLayout {
+                            spacing: 8px;
+                            Text {
+                                text: root.sandbox-status;
+                                color: Palette.text-body;
+                                font-family: Palette.font-body;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                SmithButton {
+                                    text: root.sandbox-provisioning ? "Provisioning…" : "Check & provision";
+                                    kind: "secondary";
+                                    width: 200px;
+                                    enabled: !root.sandbox-provisioning;
+                                    clicked => { root.provision-sandbox(); }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Node identity";
+                        description: "This machine's public identity address (secp256k1-derived) — share it so a peer can pair with this node.";
+                        CopyBlock {
+                            value: root.node-address;
+                            copy(v) => { root.copy-message(v); }
+                        }
+                    }
+                    Card {
+                        title: "Access key";
+                        description: "A bearer token another device presents to call this node's API when it's exposed to the network (see Network exposure below). Generating a new key does not invalidate a previously copied one — revoke access by turning Network exposure off.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            if root.access-key-error != "": Banner {
+                                kind: "error";
+                                text: root.access-key-error;
+                            }
+                            if root.node-access-key == "": HorizontalLayout {
+                                SmithButton {
+                                    text: "Generate access key";
+                                    kind: "secondary";
+                                    width: 180px;
+                                    clicked => { root.generate-access-key(); }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            if root.node-access-key != "": VerticalLayout {
+                                spacing: 8px;
+                                CopyBlock {
+                                    value: root.node-access-key;
+                                    copy(v) => { root.copy-message(v); }
+                                }
+                                HorizontalLayout {
+                                    SmithButton {
+                                        text: "Generate another";
+                                        kind: "ghost";
+                                        width: 160px;
+                                        clicked => { root.generate-access-key(); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                            }
+                        }
+                    }
+                    // Advanced/technical, collapsed by default: most users never
+                    // touch the listen port or LAN exposure.
+                    server-advanced := DisclosureHeader { label: "Advanced"; }
+                    if server-advanced.expanded: VerticalLayout {
+                        spacing: 14px;
+                        Card {
+                            title: "Port";
+                            description: "The local port Smith's API server listens on (1–65535).";
+                            VerticalLayout {
+                                spacing: 8px;
+                                HorizontalLayout {
+                                    LineEdit {
+                                        width: 160px;
+                                        text <=> root.port-text;
+                                        edited => { root.setting-changed(); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                // Was previously dropped with only a
+                                // `tracing::warn!` — now surfaced inline.
+                                if root.port-error != "": Banner {
+                                    kind: "error";
+                                    text: root.port-error;
+                                }
+                                RestartNotice { error: root.restart-error-port; restart => { root.restart-now("port"); } }
+                            }
+                        }
+                        Card {
+                            title: "Network exposure";
+                            VerticalLayout {
+                                spacing: 4px;
+                                SmithCheck {
+                                    text: "Expose server to local network";
+                                    checked <=> root.expose-to-network;
+                                    toggled => { root.setting-changed(); }
+                                }
+                                Text {
+                                    text: "Off keeps Smith on 127.0.0.1. On binds 0.0.0.0 so other devices on your LAN can reach it (an access key is then required).";
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                                // Security: surface LAN exposure as an explicit warning.
+                                if root.expose-to-network: Banner {
+                                    kind: "warning";
+                                    text: "Smith is now reachable by other devices on your network (bound to 0.0.0.0). Anyone who can reach this machine on the LAN can call the API with a valid access key. Only enable this on networks you trust.";
+                                }
+                                RestartNotice { error: root.restart-error-network; restart => { root.restart-now("network"); } }
+                            }
+                        }
+                    }
+                }
+
+                // ===== Models =====
+                if root.active-tab == 2: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Default model";
+                        description: "Used when a request (or the chat composer) doesn't name a model.";
+                        HorizontalLayout {
+                            ComboBox {
+                                width: 280px;
+                                model: root.models;
+                                current-value <=> root.default-model;
+                                selected => { root.setting-changed(); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    Card {
+                        title: "Local models";
+                        description: "Browse, download, and remove local ONNX / GGUF models.";
+                        HorizontalLayout {
+                            SmithButton {
+                                text: "Open Model Browser…";
+                                kind: "primary";
+                                width: 220px;
+                                clicked => { root.open-model-browser(); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    Card {
+                        title: "Storage location";
+                        description: "Where model weights are kept (often many GB). Point this at a roomy drive to keep them off the system disk. New downloads go here; existing models stay where they are. (See also General → Artifacts storage location, a separate setting for saved transcripts/images.)";
+                        VerticalLayout {
+                            spacing: 8px;
+                            Rectangle {
+                                height: 34px;
+                                border-radius: 4px;
+                                background: Palette.sunken;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                Text {
+                                    x: 10px;
+                                    width: parent.width - 20px;
+                                    vertical-alignment: center;
+                                    text: root.models-dir;
+                                    color: Palette.text-body;
+                                    font-family: Palette.font-mono;
+                                    font-size: 11px;
+                                    overflow: elide;
+                                }
+                            }
+                            HorizontalLayout {
+                                SmithButton {
+                                    text: "Change…";
+                                    kind: "secondary";
+                                    width: 140px;
+                                    clicked => { root.change-models-dir(); }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+                }
+
+                // ===== Inference =====
+                if root.active-tab == 3: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Thinking level";
+                        description: "Reasoning effort sent to providers that support it, including compatible local servers. Off omits this preference. The effect depends on the model and provider.";
+                        HorizontalLayout {
+                            ComboBox {
+                                width: 200px;
+                                model: root.reasoning-levels;
+                                current-value <=> root.reasoning-effort;
+                                selected => { root.setting-changed(); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    Card {
+                        title: "Voice language";
+                        description: "Language for speech-to-text (mic dictation). English uses a fast Whisper model. Russian and Mixed use Sber GigaAM (Russian/English, with punctuation) and auto-download on first use; Mixed auto-detects English or Russian per clip.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            SmithRadio {
+                                text: "English";
+                                selected: root.voice-language == "en";
+                                picked => { root.voice-language = "en"; root.setting-changed(); }
+                            }
+                            SmithRadio {
+                                text: "Русский (Russian)";
+                                selected: root.voice-language == "ru";
+                                picked => { root.voice-language = "ru"; root.setting-changed(); }
+                            }
+                            SmithRadio {
+                                text: "Mixed (English / Русский)";
+                                selected: root.voice-language == "mixed";
+                                picked => { root.voice-language = "mixed"; root.setting-changed(); }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Learning loops (Morgan)";
+                        description: "Background passes that consolidate memory and let Smith learn from how you use it. Toggling here takes effect on next restart, not immediately.";
+                        VerticalLayout {
+                            spacing: 10px;
+                            VerticalLayout {
+                                spacing: 4px;
+                                SmithCheck {
+                                    text: "Consolidate memory periodically";
+                                    checked <=> root.consolidate-enabled;
+                                    toggled => { root.setting-changed(); }
+                                }
+                                Text {
+                                    text: "Decays, merges, and caps stored memories so they don't grow without bound. Local only, no extra model inference. Recommended on.";
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            VerticalLayout {
+                                spacing: 4px;
+                                SmithCheck {
+                                    text: "Reflect on past mistakes";
+                                    checked <=> root.reflect-enabled;
+                                    toggled => { root.setting-changed(); }
+                                }
+                                Text {
+                                    text: "Periodically asks the local model to distill lessons from sessions you reacted to negatively. Runs extra background inference. Recommended off.";
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            VerticalLayout {
+                                spacing: 4px;
+                                SmithCheck {
+                                    text: "Self-evolve agent SOUL";
+                                    checked <=> root.soul-evolve-enabled;
+                                    toggled => { root.setting-changed(); }
+                                }
+                                Text {
+                                    text: "Periodically tries an improved system prompt learned from your feedback, keeping it only if it beats the current one. Runs extra background inference. Recommended off.";
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            VerticalLayout {
+                                spacing: 4px;
+                                SmithCheck {
+                                    text: "Summarize conversations with the model";
+                                    checked <=> root.memory-summarizer-enabled;
+                                    toggled => { root.setting-changed(); }
+                                }
+                                Text {
+                                    text: "Uses the local model to write richer memory summaries instead of a cheap built-in summarizer. Adds inference cost per conversation. Recommended off.";
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                    // Advanced/technical, collapsed by default: most users leave
+                    // this on Auto and never need to pick a specific EP.
+                    inference-advanced := DisclosureHeader { label: "Advanced"; }
+                    if inference-advanced.expanded: VerticalLayout {
+                        spacing: 14px;
+                        Card {
+                            title: "Execution provider";
+                            description: "Hardware preference for supported on-device runtimes. Auto is recommended. GGUF models use the provisioned llama.cpp backend; external servers manage their own hardware. GPU and NPU options require compatible drivers and models.";
+                            VerticalLayout {
+                                spacing: 8px;
+                                HorizontalLayout {
+                                    ComboBox {
+                                        width: 240px;
+                                        model: root.exec-providers;
+                                        current-value <=> root.execution-provider;
+                                        selected => { root.setting-changed(); }
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                RestartNotice { error: root.restart-error-execution-provider; restart => { root.restart-now("execution-provider"); } }
+                            }
+                        }
+                    }
+                }
+
+                // ===== Privacy =====
+                if root.active-tab == 5: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Outbound privacy filter";
+                        description: "Scrubs PII before any cloud-provider call. Review shows a panel; Enforce auto-redacts and fails closed. Local on-device inference is never scrubbed.";
+                        HorizontalLayout {
+                            ComboBox {
+                                width: 200px;
+                                model: root.privacy-modes;
+                                current-value <=> root.privacy-mode;
+                                selected => { root.setting-changed(); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                    Card {
+                        title: "Computer use";
+                        description: "How much control an agent's screen-capture/click/type tools have over this machine. Locked blocks everything, including screenshots. Read-only permits screenshots but denies input. Full permits everything without prompting.";
+                        VerticalLayout {
+                            spacing: 6px;
+                            HorizontalLayout {
+                                ComboBox {
+                                    width: 200px;
+                                    model: root.computer-use-policies;
+                                    current-value <=> root.computer-use-policy;
+                                    selected => { root.setting-changed(); }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            if root.computer-use-policy == "Assisted": Banner {
+                                kind: "warning";
+                                text: "Assisted is not interactive yet — a per-action confirmation prompt isn't built, so mutating actions are denied the same as Read-only until it is.";
+                            }
+                            RestartNotice { error: root.restart-error-computer-use; restart => { root.restart-now("computer-use"); } }
+                        }
+                    }
+                    Card {
+                        title: "Test redaction";
+                        description: "Paste text to see exactly what would be redacted before a cloud send. Values are masked.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            Rectangle {
+                                height: 90px;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                background: Palette.raised;
+                                clip: true;
+                                TextEdit {
+                                    x: 2px;
+                                    y: 2px;
+                                    width: parent.width - 4px;
+                                    height: parent.height - 4px;
+                                    text <=> root.privacy-test-input;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            HorizontalLayout {
+                                SmithButton { text: "Check"; kind: "primary"; width: 120px; clicked => { root.test-redaction(); } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            if root.privacy-tested && root.privacy-detections.length == 0: Text {
+                                text: "No sensitive data detected.";
+                                color: Palette.text-muted;
+                                font-family: Palette.font-body;
+                                font-size: 13px;
+                            }
+                            for d in root.privacy-detections: HorizontalLayout {
+                                spacing: 10px;
+                                Text { text: d.kind; color: Palette.accent; font-family: Palette.font-mono; font-size: 12px; font-weight: 600; min-width: 110px; }
+                                Text { text: d.preview; color: Palette.text-body; font-family: Palette.font-mono; font-size: 12px; }
+                                Rectangle { horizontal-stretch: 1; }
+                                Text { text: d.placeholder; color: Palette.text-subtle; font-family: Palette.font-mono; font-size: 11px; }
+                            }
+                        }
+                    }
+                }
+
+                // ===== Providers (cloud API keys) =====
+                if root.active-tab == 4: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "OpenAI";
+                        description: "API key for OpenAI models (gpt-4o, o-series). Applied on next launch.";
+                        LineEdit {
+                            input-type: password;
+                            placeholder-text: "sk-…";
+                            text <=> root.openai-key;
+                            edited => { root.setting-changed(); }
+                        }
+                    }
+                    Card {
+                        title: "Anthropic";
+                        description: "API key for Claude models. Applied on next launch.";
+                        LineEdit {
+                            input-type: password;
+                            placeholder-text: "sk-ant-…";
+                            text <=> root.anthropic-key;
+                            edited => { root.setting-changed(); }
+                        }
+                    }
+                    Card {
+                        title: "Google Gemini";
+                        description: "API key for Gemini models. Applied on next launch.";
+                        LineEdit {
+                            input-type: password;
+                            placeholder-text: "AIza…";
+                            text <=> root.gemini-key;
+                            edited => { root.setting-changed(); }
+                        }
+                    }
+                    Card {
+                        title: "OpenRouter";
+                        description: "API key for OpenRouter (multi-model aggregator). Applied on next launch.";
+                        LineEdit {
+                            input-type: password;
+                            placeholder-text: "sk-or-…";
+                            text <=> root.openrouter-key;
+                            edited => { root.setting-changed(); }
+                        }
+                    }
+                    Card {
+                        title: "Local OpenAI-compatible server";
+                        description: "Connect to LM Studio or llama.cpp running on this PC. Include /v1 and use a loopback IP. Leave the URL blank for LM Studio at http://127.0.0.1:1234/v1. Applied on next launch.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            LineEdit {
+                                placeholder-text: "http://127.0.0.1:8080/v1";
+                                text <=> root.local-openai-endpoint;
+                                edited => { root.setting-changed(); }
+                            }
+                            if root.local-openai-error != "": Banner {
+                                kind: "error";
+                                text: root.local-openai-error;
+                            }
+                            LineEdit {
+                                input-type: password;
+                                placeholder-text: "Optional bearer token";
+                                text <=> root.lmstudio-key;
+                                edited => { root.setting-changed(); }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Windows ML (experimental)";
+                        description: "Connect to a running WinMLServer on this PC. Requires its startup access key and a compatible model. GPU / NPU support depends on that runtime and model. Applied on next launch.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            LineEdit {
+                                placeholder-text: "http://127.0.0.1:8080/v1";
+                                text <=> root.winml-endpoint;
+                                edited => { root.setting-changed(); }
+                            }
+                            LineEdit {
+                                input-type: password;
+                                placeholder-text: "WinMLServer access key";
+                                text <=> root.winml-key;
+                                edited => { root.setting-changed(); }
+                            }
+                        }
+                    }
+                    RestartNotice { error: root.restart-error-providers; restart => { root.restart-now("providers"); } }
+                }
+
+                // ===== Metrics =====
+                if root.active-tab == 6: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Inference performance";
+                        description: "Live decode throughput, time-to-first-token, and token usage across recent generations (this device).";
+                        VerticalLayout {
+                            spacing: 10px;
+                            Text {
+                                text: root.metrics-summary;
+                                color: Palette.text-strong;
+                                font-family: Palette.font-mono;
+                                font-size: 13px;
+                                wrap: word-wrap;
+                            }
+                            HorizontalLayout {
+                                Rectangle { horizontal-stretch: 1; }
+                                SmithButton { text: "Refresh"; kind: "secondary"; width: 120px; clicked => { root.refresh-metrics(); } }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Recent generations";
+                        VerticalLayout {
+                            spacing: 6px;
+                            if root.metrics-rows.length == 0: Text { text: "No generations recorded yet — send a message."; color: Palette.text-muted; font-family: Palette.font-body; font-size: 13px; }
+                            for row in root.metrics-rows: Text {
+                                text: row;
+                                color: Palette.text-body;
+                                font-family: Palette.font-mono;
+                                font-size: 11px;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
+                if root.active-tab == 7: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Version";
+                        CopyBlock {
+                            value: root.app-version;
+                            copy(v) => { root.copy-message(v); }
+                        }
+                    }
+                    Card {
+                        title: "Hardware";
+                        description: "Detected on this machine — RAM, GPU, VRAM.";
+                        Text {
+                            text: root.hardware-summary;
+                            color: Palette.text-body;
+                            font-family: Palette.font-mono;
+                            font-size: 13px;
+                            wrap: word-wrap;
+                        }
+                    }
+                    Card {
+                        title: "Export diagnostics";
+                        description: "Saves a zip with the app version, detected hardware, GPU/NPU compute-routing report, and the app log — attach it when reporting a bug. Never includes chat history, memories, or provider API keys.";
+                        HorizontalLayout {
+                            SmithButton {
+                                text: root.diagnostics-exporting ? "Exporting…" : "Export diagnostics…";
+                                kind: "secondary";
+                                width: 200px;
+                                enabled: !root.diagnostics-exporting;
+                                clicked => { root.export-diagnostics(); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

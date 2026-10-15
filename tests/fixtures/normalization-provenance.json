@@ -1,0 +1,45 @@
+{
+  "scope": "Selected-file normalization fixture provenance; codec execution is not speech recognition.",
+  "source": "Task-generated offline Samantha speech from the existing local ASR qualification; no microphone or private audio.",
+  "formats": [
+    {
+      "name": "normalization-aac.m4a",
+      "byte_len": 35017,
+      "sha256": "4588192683e04c814d4755f90b6382e1c5e3f5cfd7f2afe62ec63b91d5fe0699"
+    },
+    {
+      "name": "normalization-alac.m4a",
+      "byte_len": 187601,
+      "sha256": "c67ccdc53e1718f767707489a0f65149f5c3b61f99970bec3b3612e4d9924b28"
+    }
+  ],
+  "system_converter": {
+    "name": "afconvert",
+    "byte_len": 361664,
+    "sha256": "6dbd5cac8c6636be651e584dc6b9de68ce7e3d5e7fc560e3e88d13292688b9b0"
+  },
+  "fixture_creation": {
+    "aac": [
+      "/usr/bin/afconvert",
+      "-f",
+      "m4af",
+      "-d",
+      "aac",
+      "<task-generated.wav>",
+      "<fixture-aac.m4a>"
+    ],
+    "alac": [
+      "/usr/bin/afconvert",
+      "-f",
+      "m4af",
+      "-d",
+      "alac",
+      "<task-generated.wav>",
+      "<fixture-alac.m4a>"
+    ]
+  },
+  "execution_notes": [
+    "Copied Apple converter was terminated by signal9 under macOS platform signature policy; implementation uses only verified fixed /usr/bin/afconvert.",
+    "PCM conversion succeeded in restricted tool environment; AAC/ALAC codecs were exposed only in normal OS access qualification."
+  ]
+}

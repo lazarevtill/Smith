@@ -1,0 +1,118 @@
+{
+  "date_1904": false,
+  "sheets": [
+    {
+      "name": "Data 世界",
+      "visibility": "visible",
+      "cells": [
+        {
+          "row": 1,
+          "column": 1,
+          "value": {
+            "type": "text",
+            "value": "identifier"
+          },
+          "number_format": null
+        },
+        {
+          "row": 1,
+          "column": 2,
+          "value": {
+            "type": "text",
+            "value": "value"
+          },
+          "number_format": null
+        },
+        {
+          "row": 2,
+          "column": 1,
+          "value": {
+            "type": "text",
+            "value": "00123"
+          },
+          "number_format": null
+        },
+        {
+          "row": 2,
+          "column": 2,
+          "value": {
+            "type": "number",
+            "value": "123.50"
+          },
+          "number_format": null
+        },
+        {
+          "row": 3,
+          "column": 1,
+          "value": {
+            "type": "text",
+            "value": "=SUM(A1:A2)"
+          },
+          "number_format": null
+        },
+        {
+          "row": 3,
+          "column": 2,
+          "value": {
+            "type": "boolean",
+            "value": true
+          },
+          "number_format": null
+        },
+        {
+          "row": 4,
+          "column": 1,
+          "value": {
+            "type": "text",
+            "value": "literal _x0041_ / 👋🏽\r\n<&>\""
+          },
+          "number_format": null
+        },
+        {
+          "row": 4,
+          "column": 2,
+          "value": {
+            "type": "blank"
+          },
+          "number_format": null
+        },
+        {
+          "row": 5,
+          "column": 2,
+          "value": {
+            "type": "number",
+            "value": "45000.25"
+          },
+          "number_format": {
+            "id": 164,
+            "code": "yyyy-mm-dd hh:mm"
+          }
+        },
+        {
+          "row": 6,
+          "column": 2,
+          "value": {
+            "type": "error",
+            "value": "#N/A"
+          },
+          "number_format": null
+        }
+      ]
+    },
+    {
+      "name": "Hidden",
+      "visibility": "hidden",
+      "cells": [
+        {
+          "row": 3,
+          "column": 3,
+          "value": {
+            "type": "text",
+            "value": "retained"
+          },
+          "number_format": null
+        }
+      ]
+    }
+  ]
+}

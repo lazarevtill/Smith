@@ -1,0 +1,1 @@
+Exact tokenizer chat_template from mlx-community/Qwen3-0.6B-4bit at73e3e38d981303bc594367cd910ea6eb48349da8, based on Qwen/Qwen3-0.6B. Apache-2.0 notice retained in QWEN-LICENSE. This file is test data; production interprets only the reviewed text-message subset after exact SHA-256 matching and never executes Jinja.

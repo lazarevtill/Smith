@@ -1,0 +1,11 @@
+{
+  "format_version": 1,
+  "snapshot": "Selected application source, synthetic test fixtures, and required original UI assets.",
+  "history_included": false,
+  "model_weights_included": false,
+  "user_profiles_included": false,
+  "deployment_configuration_included": false,
+  "local_evidence_logs_included": false,
+  "application_license": "Unselected; see LICENSE-STATUS.md",
+  "original_ui_commit": "adfa145a7bd706f744d17c67bf017c24c1bef57f"
+}

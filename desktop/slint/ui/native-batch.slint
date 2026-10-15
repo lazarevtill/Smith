@@ -1,0 +1,10 @@
+import { Palette, SmithButton } from "theme.slint";
+export global NativeBatch {
+ in property <bool> enabled; in property <bool> busy; in property <bool> mode; in property <bool> restore; in property <int> count;
+ callback toggle-mode(); callback toggle(string); callback select-visible(); callback apply(); callback clear();
+}
+export component NativeBatchControls inherits VerticalLayout {
+ spacing:4px;
+ HorizontalLayout { spacing:4px; SmithButton { text:NativeBatch.mode?"Done selecting":"Select chats"; height:32px; enabled:NativeBatch.enabled&&!NativeBatch.busy; clicked=>{NativeBatch.toggle-mode();} } if NativeBatch.mode: SmithButton { text:"Visible"; height:32px; enabled:!NativeBatch.busy; clicked=>{NativeBatch.select-visible();} } }
+ if NativeBatch.mode: HorizontalLayout { spacing:4px; SmithButton { text:(NativeBatch.restore?"Restore ":"Move to Trash ")+NativeBatch.count; height:32px; enabled:NativeBatch.count>0&&!NativeBatch.busy; clicked=>{NativeBatch.apply();} } SmithButton { text:"Clear"; height:32px; enabled:NativeBatch.count>0&&!NativeBatch.busy; clicked=>{NativeBatch.clear();} } }
+}

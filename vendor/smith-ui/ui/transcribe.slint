@@ -1,0 +1,341 @@
+// Transcribe view: one surface to transcribe a local file **or** a pasted URL
+// (YouTube/podcast via yt-dlp) into text / timestamps / subtitles, summarize it,
+// and save it to Artifacts for later. Backed by smith-voice + smith-ui/lib.rs.
+
+import { LineEdit, TextEdit, ComboBox, ScrollView, ListView } from "std-widgets.slint";
+import { Palette, SmithButton, EmptyState } from "theme.slint";
+import { Icon, Icons } from "icons.slint";
+
+// One saved transcript in the Artifacts list.
+export struct TranscriptItem {
+    id: string,
+    title: string,
+    subtitle: string,
+}
+
+// A small segmented format-toggle button. Exported: also reused by
+// app-window.slint's composer Artifacts-picker chip (full transcript vs.
+// summary choice) rather than duplicating this same small toggle look.
+export component FormatTab inherits Rectangle {
+    in property <string> label;
+    in property <string> token;
+    in property <bool> active;
+    callback chosen(string);
+    height: 30px;
+    width: txt.preferred-width + 22px;
+    border-radius: Palette.radius;
+    background: root.active ? Palette.accent : (ta.has-hover ? Palette.hover : Palette.raised);
+    border-width: 1px;
+    border-color: root.active ? Palette.accent : Palette.border;
+    animate background { duration: 100ms; }
+    txt := Text {
+        text: root.label;
+        color: root.active ? Palette.text-on-accent : Palette.text-body;
+        font-family: Palette.font-body;
+        font-size: 13px;
+        font-weight: root.active ? 600 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.chosen(root.token); }
+    }
+}
+
+// Compact icon-triggered delete-confirm: the X icon arms on the first click
+// (swapping to "Delete?" + a check/X confirm pair) instead of deleting
+// instantly. `item-id` should be the row's stable identity — the `changed`
+// callback disarms a stale confirm if the list reorders and this delegate
+// gets recycled for a different row (mirrors `ConfirmButton` in theme.slint
+// and `ConfirmDeleteIcon` in artifacts.slint, kept file-local here since it
+// arms on the X itself rather than a separate trash trigger).
+component ConfirmDeleteIcon inherits HorizontalLayout {
+    in property <string> item-id;
+    in property <bool> enabled: true;
+    property <bool> confirming: false;
+    callback confirmed();
+    changed item-id => { root.confirming = false; }
+
+    spacing: 4px;
+    if !root.confirming: Rectangle {
+        width: 22px;
+        height: 22px;
+        border-radius: 4px;
+        background: del.has-hover ? Palette.hover : transparent;
+        Icon { source: Icons.x; size: 12px; stroke: Palette.text-subtle; }
+        del := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => { root.confirming = true; }
+        }
+    }
+    if root.confirming: VerticalLayout {
+        alignment: center;
+        Text {
+            text: "Delete?";
+            color: Palette.text-strong;
+            font-family: Palette.font-body;
+            font-size: 11px;
+        }
+    }
+    if root.confirming: Rectangle {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        background: yes.has-hover ? Palette.hover : transparent;
+        Icon { source: Icons.check; size: 12px; stroke: Palette.accent; }
+        yes := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => {
+                root.confirming = false;
+                root.confirmed();
+            }
+        }
+    }
+    if root.confirming: Rectangle {
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        background: no.has-hover ? Palette.hover : transparent;
+        Icon { source: Icons.x; size: 12px; stroke: Palette.text-subtle; }
+        no := TouchArea {
+            mouse-cursor: pointer;
+            clicked => { root.confirming = false; }
+        }
+    }
+}
+
+export component TranscribeView inherits Rectangle {
+    background: Palette.page;
+    in property <bool> compact: false;
+    property <bool> show-history: false;
+
+    // Source = a URL or a local file path (one box for both).
+    in-out property <string> source: "";
+    in property <[string]> langs: ["Auto", "English", "Русский"];
+    in-out property <string> lang: "Auto";
+    in-out property <string> format: "text";
+    in property <string> output: "";
+    in-out property <string> status: "";
+    in-out property <bool> busy: false;
+    in property <bool> has-result: false;
+    in property <[TranscriptItem]> artifacts;
+    in-out property <string> selected-artifact: "";
+
+    callback pick-file();
+    callback start();
+    callback summarize();
+    callback save-artifact();
+    callback copy-output();
+    callback save-output();
+    callback load-artifact(string);
+    callback delete-artifact(string);
+
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0;
+
+        // ---- left: saved-transcript Artifacts list ----
+        if !root.compact || root.show-history: Rectangle {
+            min-width: root.compact ? 0px : 270px;
+            max-width: root.compact ? 100000px : 270px;
+            horizontal-stretch: root.compact ? 1 : 0;
+            background: Palette.page;
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Palette.border;
+            }
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                if root.compact: SmithButton {
+                    text: "Back to transcribe";
+                    clicked => { root.show-history = false; }
+                }
+                Text {
+                    text: "Artifacts";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 18px;
+                    font-weight: 600;
+                }
+                if root.artifacts.length == 0: EmptyState {
+                    vertical-stretch: 1;
+                    icon: Icons.book;
+                    title: "No saved transcripts";
+                    message: "Transcribe audio or a URL, then Save to Artifacts to keep it here.";
+                }
+                if root.artifacts.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for a in root.artifacts: Rectangle {
+                        height: 56px;
+                        border-radius: Palette.radius;
+                        background: a.id == root.selected-artifact
+                            ? Palette.sunken
+                            : (arow.has-hover ? Palette.hover : transparent);
+                        animate background { duration: 100ms; }
+                        arow := TouchArea {
+                            enabled: !root.busy;
+                            mouse-cursor: pointer;
+                            clicked => { root.show-history = false; root.load-artifact(a.id); }
+                        }
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 8px;
+                            spacing: 6px;
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: a.title;
+                                    color: Palette.text-strong;
+                                    font-family: Palette.font-body;
+                                    font-size: 13px;
+                                    font-weight: 600;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: a.subtitle;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-mono;
+                                    font-size: 10px;
+                                    overflow: elide;
+                                }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            VerticalLayout {
+                                alignment: center;
+                                ConfirmDeleteIcon {
+                                    item-id: a.id;
+                                    enabled: !root.busy;
+                                    confirmed => { root.delete-artifact(a.id); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---- right: the transcribe surface ----
+        if !root.compact || !root.show-history: VerticalLayout {
+            padding: 24px;
+            spacing: 14px;
+
+            HorizontalLayout {
+                Text {
+                    text: "Transcribe";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 22px;
+                    font-weight: 600;
+                }
+                Rectangle { horizontal-stretch: 1; }
+                if root.compact: SmithButton {
+                    text: "Saved transcripts";
+                    width: 180px;
+                    clicked => { root.show-history = true; }
+                }
+            }
+            Text {
+                text: "Paste a YouTube/podcast link or pick an audio/video file. Transcription runs locally; summaries use your selected model.";
+                color: Palette.text-muted;
+                font-family: Palette.font-body;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+
+            // source row: one box for URL or file path
+            HorizontalLayout {
+                spacing: 10px;
+                LineEdit {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    placeholder-text: "https://youtu.be/…  or a file path";
+                    enabled: !root.busy;
+                    text <=> root.source;
+                    accepted => { root.start(); }
+                }
+                SmithButton {
+                    text: "File…";
+                    enabled: !root.busy;
+                    kind: "secondary";
+                    width: 90px;
+                    clicked => { root.pick-file(); }
+                }
+                ComboBox {
+                    width: 130px;
+                    enabled: !root.busy;
+                    model: root.langs;
+                    current-value <=> root.lang;
+                }
+                SmithButton {
+                    text: root.busy ? "Working…" : "Transcribe";
+                    kind: "primary";
+                    width: 140px;
+                    enabled: !root.busy && root.source != "";
+                    clicked => { root.start(); }
+                }
+            }
+
+            if root.status != "": Text {
+                text: root.status;
+                color: Palette.text-muted;
+                font-family: Palette.font-body;
+                font-size: 13px;
+                wrap: word-wrap;
+            }
+
+            // format tabs + actions
+            HorizontalLayout {
+                spacing: 8px;
+                FormatTab { label: "Text"; token: "text"; active: root.format == "text"; chosen(t) => { root.format = t; } }
+                FormatTab { label: "Timestamps"; token: "timestamps"; active: root.format == "timestamps"; chosen(t) => { root.format = t; } }
+                FormatTab { label: "SRT"; token: "srt"; active: root.format == "srt"; chosen(t) => { root.format = t; } }
+                FormatTab { label: "VTT"; token: "vtt"; active: root.format == "vtt"; chosen(t) => { root.format = t; } }
+                FormatTab { label: "Summary"; token: "summary"; active: root.format == "summary"; chosen(t) => { root.format = t; } }
+                Rectangle { horizontal-stretch: 1; }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                SmithButton { text: "Summarize"; kind: "secondary"; width: 110px; enabled: root.has-result && !root.busy; clicked => { root.summarize(); } }
+                // `busy` also covers Save to Artifacts / Save… (not just
+                // Transcribe/Summarize) — a shared "an operation on this
+                // transcript is in flight" guard, so a save can't race
+                // Transcribe/Summarize rewriting the very content it's
+                // about to write, and two saves can't race each other.
+                // 190px (not 130px, which fit the old "Save to library" label):
+                // "Save to Artifacts" is 3 characters longer and was clipping to
+                // "Save to Artifa…" even at a full-width window.
+                SmithButton { text: "Save to Artifacts"; kind: "secondary"; width: 190px; enabled: root.has-result && !root.busy; clicked => { root.save-artifact(); } }
+                Rectangle { horizontal-stretch: 1; }
+                SmithButton { text: "Copy"; kind: "secondary"; width: 90px; enabled: root.output != ""; clicked => { root.copy-output(); } }
+                SmithButton { text: "Save…"; kind: "secondary"; width: 90px; enabled: root.output != "" && !root.busy; clicked => { root.save-output(); } }
+            }
+
+            // output
+            Rectangle {
+                vertical-stretch: 1;
+                border-radius: Palette.radius;
+                border-width: 1px;
+                border-color: Palette.border;
+                background: Palette.raised;
+                clip: true;
+                TextEdit {
+                    x: 4px;
+                    y: 4px;
+                    width: parent.width - 8px;
+                    height: parent.height - 8px;
+                    text: root.output;
+                    read-only: true;
+                    wrap: word-wrap;
+                    font-size: 13px;
+                }
+            }
+        }
+    }
+}

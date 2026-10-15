@@ -1,0 +1,15 @@
+[package]
+name = "smith-theme-keyboard-review"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+
+[dependencies]
+slint = { version = "=1.17.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-software", "system-tray", "unstable-fontique-010"] }
+i-slint-backend-testing = { version = "=1.17.1", features = ["renderer-software"] }
+
+[build-dependencies]
+slint-build = "=1.17.1"
+
+[workspace]

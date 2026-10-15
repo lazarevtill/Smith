@@ -1,0 +1,53 @@
+import { LineEdit, ScrollView, ComboBox } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck, EmptyState, StatusPill } from "theme.slint";
+export struct CatalogItem {id:string,name:string,format:string,selected:bool}
+export global NativeCatalog {
+ in-out property <bool> connection-models;in-out property <bool> trash;
+ in-out property <string> query;in-out property <bool> editor-open;in-out property <string> label;in-out property <string> executable;in-out property <string> model;
+ in-out property <bool> details-open;in-out property <string> rename-label;
+ in property <[CatalogItem]> rows;in property <bool> busy;in property <bool> blocked;in property <bool> can-retry;in property <bool> can-inspect;in property <bool> can-cancel;in property <bool> prepared;in property <bool> has-details;
+ in property <bool> replacing;
+ in property <string> status;in property <string> details;in property <string> current;in property <string> prepared-name;in property <string> pending-id;
+ callback new-entry();callback replace-files();callback refresh();callback scope-changed();callback details-for(string);callback select(string);callback trash-entry(string);callback restore-entry(string);callback prepare(string);callback continue-setup();callback observe();callback inspect();callback retry();callback cancel();callback pick-runtime();callback pick-model();callback save-gguf();callback save-mlx();callback rename();callback open-inference();
+}
+component Label inherits Text {font-family:Palette.font-body;font-size:12px;color:Palette.text-body;wrap:word-wrap;}
+export component NativeCatalogPane inherits ScrollView {
+ vertical-stretch:1;
+ VerticalLayout{spacing:12px;padding-right:8px;
+  Label{text:"Save local file selections here, then review them in Inference before loading.";}
+  Label{text:NativeCatalog.current;}
+  HorizontalLayout{spacing:8px;
+   LineEdit{text<=>NativeCatalog.query;placeholder-text:"Filter saved models";horizontal-stretch:1;}
+   SmithCheck{text:"Trash";checked<=>NativeCatalog.trash;enabled:!NativeCatalog.busy;toggled=>{NativeCatalog.scope-changed();}}
+   SmithButton{text:"Add local model";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked&&!NativeCatalog.trash;clicked=>{NativeCatalog.new-entry();}}
+  }
+  if NativeCatalog.status!="":Label{text:NativeCatalog.status;}
+  if NativeCatalog.can-inspect:HorizontalLayout{spacing:8px;SmithButton{text:"Inspect pending action";enabled:!NativeCatalog.busy;clicked=>{NativeCatalog.inspect();}}if NativeCatalog.can-retry:SmithButton{text:"Retry same save request";enabled:!NativeCatalog.busy;clicked=>{NativeCatalog.retry();}}}
+  if NativeCatalog.can-cancel:SmithButton{text:"Cancel file check";enabled:!NativeCatalog.busy;clicked=>{NativeCatalog.cancel();}}
+  if NativeCatalog.editor-open:VerticalLayout{spacing:8px;
+   Label{text:NativeCatalog.replacing?"Replace this saved selection":"New saved selection";font-weight:600;}
+   Label{text:"Saved name";}LineEdit{text<=>NativeCatalog.label;enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;}
+   Label{text:"GGUF runtime executable";}
+   HorizontalLayout{spacing:8px;LineEdit{text<=>NativeCatalog.executable;enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;}SmithButton{text:"Choose…";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.pick-runtime();}}}
+   Label{text:"GGUF model file";}
+   HorizontalLayout{spacing:8px;LineEdit{text<=>NativeCatalog.model;enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;}SmithButton{text:"Choose…";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.pick-model();}}}
+   HorizontalLayout{spacing:8px;SmithButton{text:"Save GGUF selection";kind:"primary";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.save-gguf();}}SmithButton{text:"Save reviewed MLX setup";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.save-mlx();}}SmithButton{text:"Close";enabled:!NativeCatalog.busy;clicked=>{NativeCatalog.editor-open=false;}}}
+   Label{text:"For MLX, inspect the chosen package in Inference first. Saving records the named files; it does not load them.";}
+  }
+  if NativeCatalog.rows.length==0:Label{text:NativeCatalog.trash?"No saved entries in Trash.":"No matching saved models.";}
+  for row in NativeCatalog.rows:Rectangle{background:Palette.raised;border-color:Palette.border;border-width:1px;border-radius:Palette.radius;min-height:108px;
+   VerticalLayout{padding:14px;spacing:8px;
+    HorizontalLayout{spacing:8px;Text{text:row.name;min-width:0px;horizontal-stretch:1;overflow:elide;font-family:Palette.font-body;font-size:15px;font-weight:600;color:Palette.text-strong;}StatusPill{text:row.format;}if row.selected:StatusPill{text:"Selected for review";}}
+    HorizontalLayout{spacing:8px;SmithButton{text:"Details";enabled:!NativeCatalog.busy;clicked=>{NativeCatalog.details-for(row.id);}}if !NativeCatalog.trash:SmithButton{text:row.selected?"Selected":"Select";enabled:!row.selected&&!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.select(row.id);}}if row.selected&&!NativeCatalog.trash:SmithButton{text:"Prepare files";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.prepare(row.id);}}Rectangle{horizontal-stretch:1;}SmithButton{text:NativeCatalog.trash?"Restore":"Trash";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{if NativeCatalog.trash{NativeCatalog.restore-entry(row.id);}else{NativeCatalog.trash-entry(row.id);}}}}
+   }
+  }
+  if NativeCatalog.prepared:VerticalLayout{spacing:6px;Label{text:"Ready for setup: "+NativeCatalog.prepared-name;}Label{text:"Continue with saved Inference settings; model loading still requires its reviewed plan.";}SmithButton{text:"Continue in Inference";kind:"primary";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.continue-setup();}}}
+  HorizontalLayout{spacing:8px;SmithButton{text:"Observe this computer";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.observe();}}SmithButton{text:"Open Inference settings";clicked=>{NativeCatalog.open-inference();}}}
+  if NativeCatalog.has-details:VerticalLayout{spacing:8px;
+   SmithButton{text:"Replace saved file selection…";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked&&!NativeCatalog.trash;clicked=>{NativeCatalog.replace-files();}}
+   HorizontalLayout{spacing:8px;Label{text:"Saved name";}LineEdit{text<=>NativeCatalog.rename-label;enabled:!NativeCatalog.busy&&!NativeCatalog.blocked&&!NativeCatalog.trash;}SmithButton{text:"Rename";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked&&!NativeCatalog.trash;clicked=>{NativeCatalog.rename();}}}
+   SmithCheck{text:"File and provenance details";checked<=>NativeCatalog.details-open;}
+   if NativeCatalog.details-open:Text{text:NativeCatalog.details;font-family:Palette.font-mono;font-size:11px;wrap:word-wrap;color:Palette.text-body;}
+  }
+ }
+}

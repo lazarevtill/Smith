@@ -1,0 +1,841 @@
+// Agents & Autonomy — the top-level home for agents plus every autonomy surface
+// (MCP, Schedules, Watchers, Extensions), framed in the Lazarev Cloud DS. A left
+// sub-nav switches an internal `sub-view`; the Agents sub-tab embeds the existing
+// AgentsView verbatim. All properties + callbacks are declared here 1:1 and bound
+// from MainWindow (app-window.slint), so the Rust bridge (lib.rs) is untouched —
+// this is a pure .slint relocation out of Settings. Memory moved out to the
+// Activity view (P4 "move Memory next to Activity"); Skills / Methods / Tools
+// recipes were three equal-weight sub-tabs and are now one "Extensions" sub-tab
+// with an inner segmented control (P4 "Consolidate navigation" — folds 3
+// power-user slots into 1 without losing any of the three forms/lists).
+
+import { LineEdit, TextEdit, ComboBox, ScrollView } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck, EmptyState, SectionLabel, ConfirmButton, Banner } from "theme.slint";
+import { Icons } from "icons.slint";
+import { AgentsView, AgentItem, SignalItem, LessonItem } from "agents.slint";
+import { McpItem, ScheduleItem, WatcherItem, SkillItem, MethodItem, RecipeItem } from "settings.slint";
+
+// A titled card (copied from settings.slint — that component is file-private).
+component Card inherits Rectangle {
+    in property <string> title;
+    in property <string> description;
+    border-radius: Palette.radius;
+    background: Palette.raised;
+    border-width: 1px;
+    border-color: Palette.border;
+    VerticalLayout {
+        alignment: start;
+        padding: 16px;
+        spacing: 10px;
+        if root.title != "": Text {
+            text: root.title;
+            color: Palette.text-strong;
+            font-family: Palette.font-body;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        if root.description != "": Text {
+            text: root.description;
+            color: Palette.text-muted;
+            font-family: Palette.font-body;
+            font-size: 12px;
+            wrap: word-wrap;
+        }
+        @children
+    }
+}
+
+// One row in the left sub-nav (copied from settings.slint — file-private there).
+component TabRow inherits Rectangle {
+    in property <string> label;
+    in property <int> index;
+    in property <int> active-index;
+    callback picked(int);
+    property <bool> active: root.index == root.active-index;
+    height: 34px;
+    border-radius: Palette.radius;
+    background: root.active ? Palette.muted : (ta.has-hover ? Palette.hover : transparent);
+    animate background { duration: 100ms; }
+    Rectangle {
+        x: 0;
+        y: 7px;
+        width: 3px;
+        height: parent.height - 14px;
+        border-radius: 2px;
+        background: Palette.accent;
+        opacity: root.active ? 1.0 : 0.0;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.picked(root.index); }
+    }
+    Text {
+        x: 14px;
+        vertical-alignment: center;
+        text: root.label;
+        color: root.active ? Palette.text-strong : Palette.text-body;
+        font-family: Palette.font-body;
+        font-size: 13px;
+        font-weight: root.active ? 600 : 500;
+    }
+}
+
+// A small segmented pill toggle for the Extensions sub-tab's inner
+// Skills/Methods/Tools switch (copied from transcribe.slint's `FormatTab` —
+// that component is file-private there too).
+component ExtTab inherits Rectangle {
+    in property <string> label;
+    in property <string> token;
+    in property <bool> active;
+    callback chosen(string);
+    height: 30px;
+    width: txt.preferred-width + 22px;
+    border-radius: Palette.radius;
+    background: root.active ? Palette.accent : (ta.has-hover ? Palette.hover : Palette.raised);
+    border-width: 1px;
+    border-color: root.active ? Palette.accent : Palette.border;
+    animate background { duration: 100ms; }
+    txt := Text {
+        text: root.label;
+        color: root.active ? Palette.text-on-accent : Palette.text-body;
+        font-family: Palette.font-body;
+        font-size: 13px;
+        font-weight: root.active ? 600 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.chosen(root.token); }
+    }
+}
+
+export component AgentsAutonomyView inherits Rectangle {
+    background: Palette.page;
+
+    // Which sub-tab is active (view-internal; 0=Agents, 1=MCP, 2=Schedules,
+    // 3=Watchers, 4=Extensions).
+    in-out property <int> sub-view: 0;
+
+    // --- Agents (passed through 1:1 to the embedded AgentsView) -----------
+    in property <[AgentItem]> agents;
+    in property <[string]> models;
+    in-out property <string> agent-name;
+    in-out property <string> agent-prompt;
+    in-out property <string> agent-model;
+    in-out property <string> agent-working-dir;
+    in-out property <string> agent-soul;
+    in-out property <bool> agent-memory;
+    in-out property <bool> agent-tools;
+    in-out property <bool> agent-computer-use;
+    in-out property <bool> agent-image-generation;
+    in property <string> global-computer-use-policy: "Read-only";
+    in-out property <string> editing-agent: "";
+    in property <bool> agent-saving: false;
+    in property <bool> agent-loading: false;
+    in property <bool> agent-deleting: false;
+    in property <string> agent-save-status: "";
+    in property <bool> agent-save-is-error: false;
+    in property <[SignalItem]> agent-signals;
+    in property <[LessonItem]> agent-lessons;
+    in property <string> agent-soul-current: "";
+    in property <string> agent-challenger-summary: "";
+    in property <string> agent-evolve-state: "";
+    in property <bool> agent-evolve-is-error: false;
+    callback evolve-agent-now();
+    in-out property <string> agent-run-input;
+    in property <string> agent-run-state;
+    in property <string> agent-run-result;
+    callback save-agent();
+    callback delete-agent(string);
+    callback new-agent();
+    callback select-agent(string);
+    callback run-agent-foreground();
+    callback run-agent-background();
+    callback open-runs();
+
+    // --- Shared (schedule/watcher agent pickers) --------------------------
+    in property <[string]> agent-names;
+
+    // --- MCP servers ------------------------------------------------------
+    in property <[McpItem]> mcp-providers;
+    in-out property <string> mcp-name;
+    in-out property <string> mcp-command;
+    in-out property <string> mcp-args;
+    // Success feedback after Add — the form used to just silently clear.
+    in property <string> mcp-status: "";
+    // Busy indicator while an Add is in flight (P3) — MCP registration can
+    // spawn/handshake with an external process, unlike the other forms'
+    // plain DB inserts.
+    in property <bool> mcp-adding: false;
+    callback add-mcp();
+    callback remove-mcp(string);
+
+    // --- Schedules --------------------------------------------------------
+    in property <[ScheduleItem]> schedules;
+    in-out property <string> sched-name;
+    in-out property <string> sched-agent;
+    in-out property <string> sched-cron;
+    in-out property <string> sched-prompt;
+    // Cron validation was previously silent (an invalid expression was
+    // accepted and just never fired) — now live-validated as you type, with
+    // a bonus "next 3 fire times" preview once it parses.
+    in property <string> sched-cron-error: "";
+    in property <string> sched-next-fires: "";
+    in property <string> sched-status: "";
+    in property <bool> sched-adding: false;
+    callback validate-cron(string);
+    callback add-schedule();
+    callback remove-schedule(string);
+    callback toggle-schedule(string);
+
+    // --- Watchers ---------------------------------------------------------
+    in property <[WatcherItem]> watchers;
+    in-out property <string> watch-name;
+    in-out property <string> watch-agent;
+    in-out property <string> watch-path;
+    // watch-kinds is NOT a MainWindow property — declared locally with its default.
+    in property <[string]> watch-kinds: ["Any", "Created", "Modified", "Removed"];
+    in-out property <string> watch-kind: "Any";
+    in-out property <bool> watch-recursive: true;
+    in property <string> watch-status: "";
+    in property <bool> watch-adding: false;
+    callback add-watcher();
+    callback remove-watcher(string);
+    callback toggle-watcher(string);
+
+    // Memory moved to the Activity view (P4 "move Memory next to Activity")
+    // — it's no longer a sub-tab here.
+
+    // --- Skills -----------------------------------------------------------
+    in property <[SkillItem]> skills;
+    in-out property <string> skill-name;
+    in-out property <string> skill-category;
+    in-out property <string> skill-desc;
+    in-out property <string> skill-instructions;
+    in-out property <bool> skill-enabled: true;
+    in property <string> skill-status: "";
+    in property <bool> skill-adding: false;
+    callback add-skill();
+    callback remove-skill(string);
+    callback toggle-skill(string);
+
+    // --- Methods ----------------------------------------------------------
+    in property <[MethodItem]> methods;
+    in-out property <string> method-name;
+    in-out property <string> method-desc;
+    in-out property <string> method-instructions;
+    in-out property <bool> method-enabled: true;
+    in property <string> method-status: "";
+    in property <bool> method-adding: false;
+    callback add-method();
+    callback remove-method(string);
+    callback toggle-method(string);
+
+    // --- Tools (plugin recipes) -------------------------------------------
+    in property <[RecipeItem]> recipes;
+    in-out property <string> recipe-name;
+    in-out property <string> recipe-desc;
+    in-out property <string> recipe-command;
+    in-out property <string> recipe-params;
+    in-out property <bool> recipe-enabled: true;
+    // Parse failure used to be silently swallowed (replaced with an empty
+    // schema) — now rejected with this inline error instead.
+    in property <string> recipe-params-error: "";
+    in property <string> recipe-status: "";
+    in property <bool> recipe-adding: false;
+    callback add-recipe();
+    callback remove-recipe(string);
+    callback toggle-recipe(string);
+
+    // Skills / Methods / Tools-recipes are consolidated into one
+    // "Extensions" sub-tab (P4 "Consolidate navigation") — a local
+    // segmented control inside it picks which of the three shows.
+    property <string> pane-title: root.sub-view == 1 ? "MCP servers"
+        : root.sub-view == 2 ? "Schedules"
+        : root.sub-view == 3 ? "Watchers"
+        : root.sub-view == 4 ? "Extensions" : "";
+    // Which Extensions sub-pane is showing: "skills" | "methods" | "tools".
+    in-out property <string> ext-tab: "skills";
+
+    HorizontalLayout {
+        width: 100%;
+        height: 100%;
+        spacing: 0;
+
+        // --- Left: sub-nav ---------------------------------------------------
+        Rectangle {
+            width: 196px;
+            background: Palette.sunken;
+            Rectangle {
+                x: parent.width - 1px;
+                width: 1px;
+                background: Palette.border;
+            }
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+                Text {
+                    text: "Agents & Autonomy";
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 18px;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                }
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        alignment: start;
+                        spacing: 14px;
+                        VerticalLayout {
+                            spacing: 3px;
+                            SectionLabel { text: "AGENTS"; }
+                            TabRow { label: "Agents"; index: 0; active-index: root.sub-view; picked(i) => { root.sub-view = i; } }
+                        }
+                        VerticalLayout {
+                            spacing: 3px;
+                            SectionLabel { text: "AUTONOMY"; }
+                            TabRow { label: "MCP"; index: 1; active-index: root.sub-view; picked(i) => { root.sub-view = i; } }
+                            TabRow { label: "Schedules"; index: 2; active-index: root.sub-view; picked(i) => { root.sub-view = i; } }
+                            TabRow { label: "Watchers"; index: 3; active-index: root.sub-view; picked(i) => { root.sub-view = i; } }
+                            TabRow { label: "Extensions"; index: 4; active-index: root.sub-view; picked(i) => { root.sub-view = i; } }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- Right: Agents (sub-view 0) or the autonomy panes (1..4) ----------
+        if root.sub-view == 0: AgentsView {
+            horizontal-stretch: 1;
+            agents: root.agents;
+            models: root.models;
+            agent-name <=> root.agent-name;
+            agent-prompt <=> root.agent-prompt;
+            agent-model <=> root.agent-model;
+            agent-working-dir <=> root.agent-working-dir;
+            agent-soul <=> root.agent-soul;
+            agent-memory <=> root.agent-memory;
+            agent-tools <=> root.agent-tools;
+            agent-computer-use <=> root.agent-computer-use;
+            agent-image-generation <=> root.agent-image-generation;
+            global-computer-use-policy: root.global-computer-use-policy;
+            agent-signals: root.agent-signals;
+            agent-lessons: root.agent-lessons;
+            agent-soul-current: root.agent-soul-current;
+            agent-challenger-summary: root.agent-challenger-summary;
+            agent-evolve-state: root.agent-evolve-state;
+            agent-evolve-is-error: root.agent-evolve-is-error;
+            evolve-agent-now => { root.evolve-agent-now(); }
+            editing-agent <=> root.editing-agent;
+            agent-saving: root.agent-saving;
+            agent-loading: root.agent-loading;
+            agent-deleting: root.agent-deleting;
+            agent-save-status: root.agent-save-status;
+            agent-save-is-error: root.agent-save-is-error;
+            agent-run-input <=> root.agent-run-input;
+            agent-run-state: root.agent-run-state;
+            agent-run-result: root.agent-run-result;
+            save-agent => { root.save-agent(); }
+            delete-agent(id) => { root.delete-agent(id); }
+            new-agent => { root.new-agent(); }
+            select-agent(id) => { root.select-agent(id); }
+            run-agent-foreground => { root.run-agent-foreground(); }
+            run-agent-background => { root.run-agent-background(); }
+            open-runs => { root.open-runs(); }
+        }
+
+        if root.sub-view != 0: ScrollView {
+            horizontal-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                padding: 24px;
+                spacing: 16px;
+
+                Text {
+                    text: root.pane-title;
+                    height: self.preferred-height;
+                    color: Palette.text-strong;
+                    font-family: Palette.font-display;
+                    font-size: 22px;
+                    font-weight: 600;
+                }
+
+                // ===== MCP servers =====
+                if root.sub-view == 1: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Add MCP server (stdio)";
+                        description: "Connect an external tool server. Use a direct executable (node / python / uvx) — Windows .cmd shims like npx don't work over stdio.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            LineEdit {
+                                placeholder-text: "Name (e.g. filesystem)";
+                                text <=> root.mcp-name; enabled: !root.mcp-adding;
+                            }
+                            LineEdit {
+                                placeholder-text: "Command (e.g. uvx)";
+                                text <=> root.mcp-command; enabled: !root.mcp-adding;
+                            }
+                            LineEdit {
+                                placeholder-text: "Arguments (plain words or JSON string array)";
+                                text <=> root.mcp-args; enabled: !root.mcp-adding;
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                SmithButton {
+                                    text: root.mcp-adding ? "Working…" : "Add server";
+                                    kind: "primary";
+                                    width: 140px;
+                                    // Disabled instead of the old silent
+                                    // no-op when a required field is empty;
+                                    // also disabled (with busy label) while
+                                    // an add is in flight.
+                                    enabled: root.mcp-name != "" && root.mcp-command != "" && !root.mcp-adding;
+                                    clicked => { root.add-mcp(); }
+                                }
+                                if root.mcp-status != "": Text {
+                                    vertical-alignment: center;
+                                    text: root.mcp-status;
+                                    wrap: word-wrap;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Configured servers";
+                        VerticalLayout {
+                            spacing: 8px;
+                            if root.mcp-providers.length == 0: EmptyState {
+                                icon: Icons.layers;
+                                title: "No MCP servers";
+                                message: "Connect a Model Context Protocol server to give agents external tools. Add one above.";
+                            }
+                            for m in root.mcp-providers: HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text {
+                                        text: m.name;
+                                        color: Palette.text-strong;
+                                        font-family: Palette.font-body;
+                                        font-size: 14px;
+                                        font-weight: 600;
+                                    }
+                                    Text {
+                                        text: m.detail;
+                                        color: Palette.text-muted;
+                                        font-family: Palette.font-mono;
+                                        font-size: 11px;
+                                        overflow: elide;
+                                    }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                VerticalLayout {
+                                    alignment: center;
+                                    ConfirmButton {
+                                        label: "Remove";
+                                        confirm-text: "Remove server?";
+                                        reset-key: m.id; enabled: !root.mcp-adding;
+                                        confirmed => { root.remove-mcp(m.id); }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ===== Schedules =====
+                if root.sub-view == 2: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Add schedule";
+                        description: "Run an agent on a cron cadence (seconds field first — \"0 0 9 * * *\" is 9am daily).";
+                        VerticalLayout {
+                            spacing: 8px;
+                            LineEdit { placeholder-text: "Name"; text <=> root.sched-name; enabled: !root.sched-adding; }
+                            ComboBox { model: root.agent-names; current-value <=> root.sched-agent; enabled: !root.sched-adding; }
+                            LineEdit {
+                                placeholder-text: "Cron (e.g. 0 0 9 * * *)";
+                                text <=> root.sched-cron; enabled: !root.sched-adding;
+                                edited(t) => { root.validate-cron(t); }
+                            }
+                            // Was previously unvalidated (an invalid cron was
+                            // accepted and simply never fired) — now checked
+                            // live as you type, with an inline error and a
+                            // "next 3 fire times" preview once it parses.
+                            if root.sched-cron-error != "": Banner {
+                                kind: "error";
+                                text: root.sched-cron-error;
+                            }
+                            if root.sched-next-fires != "": Text {
+                                text: "Next: " + root.sched-next-fires;
+                                color: Palette.text-muted;
+                                font-family: Palette.font-mono;
+                                font-size: 11px;
+                                wrap: word-wrap;
+                            }
+                            LineEdit { placeholder-text: "Prompt for the agent"; text <=> root.sched-prompt; enabled: !root.sched-adding; }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                SmithButton {
+                                    text: root.sched-adding ? "Working…" : "Add schedule";
+                                    kind: "primary";
+                                    width: 150px;
+                                    enabled: root.sched-name != "" && root.sched-cron != "" && root.sched-cron-error == "" && !root.sched-adding;
+                                    clicked => { root.add-schedule(); }
+                                }
+                                if root.sched-status != "": Text {
+                                    vertical-alignment: center;
+                                    text: root.sched-status;
+                                    wrap: word-wrap;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Active schedules";
+                        VerticalLayout {
+                            spacing: 8px;
+                            if root.schedules.length == 0: EmptyState {
+                                icon: Icons.clock;
+                                title: "No schedules";
+                                message: "Schedule an agent to run on a recurring cron cadence. Create one above.";
+                            }
+                            for s in root.schedules: HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout { alignment: center; SmithCheck { checked: s.enabled; enabled: !root.sched-adding; toggled => { root.toggle-schedule(s.id); } } }
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text { text: s.name; color: Palette.text-strong; font-family: Palette.font-body; font-size: 14px; font-weight: 600; }
+                                    Text { text: s.detail; color: Palette.text-muted; font-family: Palette.font-mono; font-size: 11px; overflow: elide; }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                VerticalLayout { alignment: center; ConfirmButton { label: "Remove"; confirm-text: "Remove schedule?"; reset-key: s.id; enabled: !root.sched-adding; confirmed => { root.remove-schedule(s.id); } } }
+                            }
+                        }
+                    }
+                }
+
+                // ===== Watchers =====
+                if root.sub-view == 3: VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Add watcher";
+                        description: "Run an agent when a file or folder changes.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            LineEdit { placeholder-text: "Name"; text <=> root.watch-name; enabled: !root.watch-adding; }
+                            ComboBox { model: root.agent-names; current-value <=> root.watch-agent; enabled: !root.watch-adding; }
+                            LineEdit { placeholder-text: "Path (file or folder)"; text <=> root.watch-path; enabled: !root.watch-adding; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                ComboBox { width: 160px; model: root.watch-kinds; current-value <=> root.watch-kind; enabled: !root.watch-adding; }
+                                SmithCheck { text: "Recursive"; checked <=> root.watch-recursive; enabled: !root.watch-adding; }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                SmithButton {
+                                    text: root.watch-adding ? "Working…" : "Add watcher";
+                                    kind: "primary";
+                                    width: 150px;
+                                    // A watcher also needs an agent to run — the
+                                    // handler used to just warn+return silently.
+                                    enabled: root.watch-name != "" && root.watch-path != "" && root.watch-agent != "" && !root.watch-adding;
+                                    clicked => { root.add-watcher(); }
+                                }
+                                if root.watch-status != "": Text {
+                                    vertical-alignment: center;
+                                    text: root.watch-status;
+                                    wrap: word-wrap;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Active watchers";
+                        VerticalLayout {
+                            spacing: 8px;
+                            if root.watchers.length == 0: EmptyState {
+                                icon: Icons.eye;
+                                title: "No watchers";
+                                message: "Run an agent automatically when files change. Add a watcher above.";
+                            }
+                            for wt in root.watchers: HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout { alignment: center; SmithCheck { checked: wt.enabled; enabled: !root.watch-adding; toggled => { root.toggle-watcher(wt.id); } } }
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text { text: wt.name; color: Palette.text-strong; font-family: Palette.font-body; font-size: 14px; font-weight: 600; }
+                                    Text { text: wt.detail; color: Palette.text-muted; font-family: Palette.font-mono; font-size: 11px; overflow: elide; }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                VerticalLayout { alignment: center; ConfirmButton { label: "Remove"; confirm-text: "Remove watcher?"; reset-key: wt.id; enabled: !root.watch-adding; confirmed => { root.remove-watcher(wt.id); } } }
+                            }
+                        }
+                    }
+                }
+
+                // ===== Extensions: Skills / Methods / Tools, one sub-tab
+                // with an inner segmented control (P4 "fold Skills / Methods
+                // / Tools-recipes into one Extensions tab") =====
+                if root.sub-view == 4: VerticalLayout {
+                    spacing: 14px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        ExtTab { label: "Skills"; token: "skills"; active: root.ext-tab == "skills"; chosen(t) => { root.ext-tab = t; } }
+                        ExtTab { label: "Methods"; token: "methods"; active: root.ext-tab == "methods"; chosen(t) => { root.ext-tab = t; } }
+                        ExtTab { label: "Tools"; token: "tools"; active: root.ext-tab == "tools"; chosen(t) => { root.ext-tab = t; } }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                // ----- Skills -----
+                if root.ext-tab == "skills": VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Add skill";
+                        description: "A reusable instruction set. Enabled skills are injected into every agent run.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            LineEdit { placeholder-text: "Name (e.g. Research Analyst)"; text <=> root.skill-name; enabled: !root.skill-adding; }
+                            LineEdit { placeholder-text: "Category (optional)"; text <=> root.skill-category; enabled: !root.skill-adding; }
+                            LineEdit { placeholder-text: "Short description"; text <=> root.skill-desc; enabled: !root.skill-adding; }
+                            Rectangle {
+                                height: 140px;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                background: Palette.raised;
+                                clip: true;
+                                TextEdit {
+                                    x: 2px;
+                                    y: 2px;
+                                    width: parent.width - 4px;
+                                    height: parent.height - 4px;
+                                    text <=> root.skill-instructions; enabled: !root.skill-adding;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                SmithCheck { text: "Enabled"; checked <=> root.skill-enabled; enabled: !root.skill-adding; }
+                                if root.skill-status != "": Text {
+                                    vertical-alignment: center;
+                                    text: root.skill-status;
+                                    wrap: word-wrap;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                SmithButton {
+                                    text: root.skill-adding ? "Working…" : "Add skill";
+                                    kind: "primary";
+                                    width: 140px;
+                                    enabled: root.skill-name != "" && !root.skill-adding;
+                                    clicked => { root.add-skill(); }
+                                }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Skills";
+                        VerticalLayout {
+                            spacing: 8px;
+                            if root.skills.length == 0: EmptyState {
+                                icon: Icons.star;
+                                title: "No skills";
+                                message: "Reusable instruction sets you can attach to agent runs. Add one above.";
+                            }
+                            for sk in root.skills: HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout { alignment: center; SmithCheck { checked: sk.enabled; enabled: !root.skill-adding; toggled => { root.toggle-skill(sk.id); } } }
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text { text: sk.name; color: Palette.text-strong; font-family: Palette.font-body; font-size: 14px; font-weight: 600; }
+                                    Text { text: sk.detail; color: Palette.text-muted; font-family: Palette.font-mono; font-size: 11px; overflow: elide; }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                VerticalLayout { alignment: center; ConfirmButton { label: "Remove"; confirm-text: "Remove skill?"; reset-key: sk.id; enabled: !root.skill-adding; confirmed => { root.remove-skill(sk.id); } } }
+                            }
+                        }
+                    }
+                }
+
+                // ----- Methods -----
+                if root.ext-tab == "methods": VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Add method";
+                        description: "A learned, reusable workflow. Enabled methods are injected into every agent run.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            LineEdit { placeholder-text: "Name (e.g. Bug triage)"; text <=> root.method-name; enabled: !root.method-adding; }
+                            LineEdit { placeholder-text: "Short description"; text <=> root.method-desc; enabled: !root.method-adding; }
+                            Rectangle {
+                                height: 140px;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                background: Palette.raised;
+                                clip: true;
+                                TextEdit {
+                                    x: 2px;
+                                    y: 2px;
+                                    width: parent.width - 4px;
+                                    height: parent.height - 4px;
+                                    text <=> root.method-instructions; enabled: !root.method-adding;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                SmithCheck { text: "Enabled"; checked <=> root.method-enabled; enabled: !root.method-adding; }
+                                if root.method-status != "": Text {
+                                    vertical-alignment: center;
+                                    text: root.method-status;
+                                    wrap: word-wrap;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                SmithButton {
+                                    text: root.method-adding ? "Working…" : "Add method";
+                                    kind: "primary";
+                                    width: 140px;
+                                    enabled: root.method-name != "" && !root.method-adding;
+                                    clicked => { root.add-method(); }
+                                }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Methods";
+                        VerticalLayout {
+                            spacing: 8px;
+                            if root.methods.length == 0: EmptyState {
+                                icon: Icons.list;
+                                title: "No methods";
+                                message: "Saved step-by-step procedures an agent can follow. Add one above.";
+                            }
+                            for mt in root.methods: HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout { alignment: center; SmithCheck { checked: mt.enabled; enabled: !root.method-adding; toggled => { root.toggle-method(mt.id); } } }
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text { text: mt.name; color: Palette.text-strong; font-family: Palette.font-body; font-size: 14px; font-weight: 600; }
+                                    Text { text: mt.detail; color: Palette.text-muted; font-family: Palette.font-mono; font-size: 11px; overflow: elide; }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                VerticalLayout { alignment: center; ConfirmButton { label: "Remove"; confirm-text: "Remove method?"; reset-key: mt.id; enabled: !root.method-adding; confirmed => { root.remove-method(mt.id); } } }
+                            }
+                        }
+                    }
+                }
+
+                // ----- Tools (plugin recipes) -----
+                if root.ext-tab == "tools": VerticalLayout {
+                    spacing: 14px;
+                    Card {
+                        title: "Add tool (plugin recipe)";
+                        description: "Define a tool as a command template with {placeholders}. The model fills them; the command runs in the WSL2 sandbox.";
+                        VerticalLayout {
+                            spacing: 8px;
+                            LineEdit { placeholder-text: "Tool name (e.g. wordcount)"; text <=> root.recipe-name; enabled: !root.recipe-adding; }
+                            LineEdit { placeholder-text: "Description (what it does)"; text <=> root.recipe-desc; enabled: !root.recipe-adding; }
+                            LineEdit { placeholder-text: "Command, e.g.  echo {text} | wc -w"; text <=> root.recipe-command; enabled: !root.recipe-adding; }
+                            Rectangle {
+                                height: 110px;
+                                border-radius: 4px;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                background: Palette.raised;
+                                clip: true;
+                                TextEdit {
+                                    x: 2px;
+                                    y: 2px;
+                                    width: parent.width - 4px;
+                                    height: parent.height - 4px;
+                                    text <=> root.recipe-params; enabled: !root.recipe-adding;
+                                    wrap: word-wrap;
+                                }
+                            }
+                            Text { text: "Parameters JSON-Schema (optional)"; color: Palette.text-subtle; font-family: Palette.font-mono; font-size: 10px; }
+                            // Was previously swallowed on parse failure
+                            // (silently replaced with an empty schema) —
+                            // now rejected with this inline error instead.
+                            if root.recipe-params-error != "": Banner {
+                                kind: "error";
+                                text: root.recipe-params-error;
+                            }
+                            HorizontalLayout {
+                                spacing: 10px;
+                                SmithCheck { text: "Enabled"; checked <=> root.recipe-enabled; enabled: !root.recipe-adding; }
+                                if root.recipe-status != "": Text {
+                                    vertical-alignment: center;
+                                    text: root.recipe-status;
+                                    wrap: word-wrap;
+                                    color: Palette.text-muted;
+                                    font-family: Palette.font-body;
+                                    font-size: 12px;
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                SmithButton {
+                                    text: root.recipe-adding ? "Working…" : "Add tool";
+                                    kind: "primary";
+                                    width: 140px;
+                                    enabled: root.recipe-name != "" && root.recipe-command != "" && !root.recipe-adding;
+                                    clicked => { root.add-recipe(); }
+                                }
+                            }
+                        }
+                    }
+                    Card {
+                        title: "Plugin tools";
+                        VerticalLayout {
+                            spacing: 8px;
+                            if root.recipes.length == 0: EmptyState {
+                                icon: Icons.zap;
+                                title: "No plugin tools";
+                                message: "JSON command templates the model can call as tools, run in the sandbox. Add one above.";
+                            }
+                            for rc in root.recipes: HorizontalLayout {
+                                spacing: 10px;
+                                VerticalLayout { alignment: center; SmithCheck { checked: rc.enabled; enabled: !root.recipe-adding; toggled => { root.toggle-recipe(rc.id); } } }
+                                VerticalLayout {
+                                    alignment: center;
+                                    spacing: 2px;
+                                    Text { text: rc.name; color: Palette.text-strong; font-family: Palette.font-body; font-size: 14px; font-weight: 600; }
+                                    Text { text: rc.detail; color: Palette.text-muted; font-family: Palette.font-mono; font-size: 11px; overflow: elide; }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                VerticalLayout { alignment: center; ConfirmButton { label: "Remove"; confirm-text: "Remove tool?"; reset-key: rc.id; enabled: !root.recipe-adding; confirmed => { root.remove-recipe(rc.id); } } }
+                            }
+                        }
+                    }
+                }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,26 @@
+[package]
+name = "smith-media"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "Bounded, offline attachment validation and confined managed ingestion for Smith"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+sha2 = "0.11"
+uuid = { version = "1", features = ["v4"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+zip = { version = "=9.0.3", default-features = false, features = ["deflate-flate2"] }
+roxmltree = "0.21"
+calamine = { version = "=0.31.0", default-features = false }
+ttf-parser = { version = "=0.25.1", default-features = false, features = ["std"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1", features = ["fs"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[workspace]

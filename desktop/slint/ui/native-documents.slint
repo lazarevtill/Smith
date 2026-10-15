@@ -1,0 +1,67 @@
+import { LineEdit, TextEdit, ComboBox } from "std-widgets.slint";
+import { Palette, SmithButton } from "theme.slint";
+export global NativeDocuments {
+    in property <bool> available;
+    in property <bool> busy;
+    in property <bool> pending;
+    in property <bool> document;
+    in property <bool> image;
+    in property <bool> opened;
+    in property <bool> can-save-answer;
+    in property <string> review;
+    in property <string> attached;
+    in-out property <bool> generator-open;
+    in-out property <int> format-index;
+    in-out property <string> name;
+    in-out property <string> headers;
+    in-out property <string> rows;
+    callback attach-context();
+    callback attach-reference();
+    callback clear();
+    callback export();
+    callback save-answer();
+    callback generate();
+    callback promote();
+}
+component Label inherits Text { font-family: Palette.font-body; font-size: 12px; color: Palette.text-body; wrap: word-wrap; }
+export component NativeDocumentReview inherits VerticalLayout {
+    spacing: 6px;
+    if NativeDocuments.pending: VerticalLayout {
+        spacing: 6px;
+        Label { text: NativeDocuments.review; }
+        HorizontalLayout {
+            spacing: 8px;
+            if NativeDocuments.document: SmithButton { text: "Attach reviewed excerpt"; enabled: !NativeDocuments.busy; clicked => { NativeDocuments.attach-context(); } }
+            if NativeDocuments.image: SmithButton { text: "Keep image as reference only"; enabled: !NativeDocuments.busy; clicked => { NativeDocuments.attach-reference(); } }
+        }
+    }
+    if NativeDocuments.attached != "": HorizontalLayout {
+        spacing: 8px;
+        Label { text: NativeDocuments.attached; horizontal-stretch: 1; }
+        SmithButton { text: "Remove attachments"; enabled: !NativeDocuments.busy; clicked => { NativeDocuments.clear(); } }
+    }
+}
+export component NativeArtifactControls inherits VerticalLayout {
+    spacing: 8px;
+    Label { text: "Import uses the chat attachment review. Documents are sent as bounded excerpts; image pixels are not sent to text models. Original bytes remain local."; }
+    NativeDocumentReview {}
+    if NativeDocuments.pending: SmithButton{text:"Save reviewed original to Artifacts";enabled:!NativeDocuments.busy;clicked=>{NativeDocuments.promote();}}
+    HorizontalLayout {
+        spacing: 8px;
+        SmithButton { text: "Export opened original…"; enabled: NativeDocuments.opened && !NativeDocuments.busy; clicked => { NativeDocuments.export(); } }
+        SmithButton { text: "Save visible answer"; enabled: NativeDocuments.can-save-answer && !NativeDocuments.busy; clicked => { NativeDocuments.save-answer(); } }
+        SmithButton { text: NativeDocuments.generator-open ? "Close table export" : "Create table document"; enabled: !NativeDocuments.busy; clicked => { NativeDocuments.generator-open = !NativeDocuments.generator-open; } }
+    }
+    if NativeDocuments.generator-open: VerticalLayout {
+        spacing: 8px;
+        Label { text: "Create a local table document. Enter column names separated by tabs; each following line is a row with the same number of tab-separated cells."; }
+        HorizontalLayout {
+            spacing: 8px;
+            ComboBox { model: ["CSV", "Markdown", "XLSX", "PDF", "PPTX"]; current-index <=> NativeDocuments.format-index; }
+            LineEdit { placeholder-text: "Filename with matching extension"; text <=> NativeDocuments.name; }
+        }
+        LineEdit { placeholder-text: "Column names separated by tabs"; text <=> NativeDocuments.headers; }
+        TextEdit { text <=> NativeDocuments.rows; height: 100px; }
+        SmithButton { text: "Create reviewed table"; kind: "primary"; enabled: NativeDocuments.available && !NativeDocuments.busy; clicked => { NativeDocuments.generate(); } }
+    }
+}

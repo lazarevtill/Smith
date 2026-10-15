@@ -1,0 +1,57 @@
+import { LineEdit, ComboBox } from "std-widgets.slint";
+import { Palette, SmithButton, SmithCheck } from "theme.slint";
+export global NativeProfile {
+    in property <bool> supported;
+    in property <bool> busy;
+    in property <bool> workspace-open;
+    in property <bool> can-open;
+    in property <bool> reviewed;
+    in property <bool> deactivate;
+    in property <string> status;
+    in property <string> report;
+    in-out property <string> source;
+    in-out property <string> managed;
+    in-out property <bool> attested;
+    in-out property <bool> confirmed;
+    in-out property <bool> details;
+    in-out property <int> key-kind;
+    changed key-kind=>{self.master="";self.database-key="";self.artifact-key="";self.confirmed=false;}
+    in-out property <string> master;
+    in-out property <string> database-key;
+    in-out property <string> artifact-key;
+    callback choose-source(); callback choose-managed();
+    callback inspect(); callback import(); callback inspect-deactivation();
+    callback deactivate-import(); callback open(); callback refresh(); callback discard();
+}
+component Label inherits Text { font-family:Palette.font-body; font-size:12px; color:Palette.text-body; wrap:word-wrap; }
+export component NativeProfileControls inherits VerticalLayout {
+    spacing:10px;
+    Label { text:"Import independent copies from the stopped original Smith app. Your current workspace and the source copies are retained."; }
+    if !NativeProfile.supported: Label { text:"Copied-profile import is available when this window owns its local workspace."; }
+    Label { text:"Original profile copy (contains smith.db)"; }
+    HorizontalLayout { spacing:8px; LineEdit { text<=>NativeProfile.source; enabled:!NativeProfile.busy && !NativeProfile.reviewed; } SmithButton { text:"Choose…"; enabled:NativeProfile.supported && !NativeProfile.busy && !NativeProfile.reviewed; clicked=>{NativeProfile.choose-source();} } }
+    Label { text:"Original managed-files copy"; }
+    HorizontalLayout { spacing:8px; LineEdit { text<=>NativeProfile.managed; enabled:!NativeProfile.busy && !NativeProfile.reviewed; } SmithButton { text:"Choose…"; enabled:NativeProfile.supported && !NativeProfile.busy && !NativeProfile.reviewed; clicked=>{NativeProfile.choose-managed();} } }
+    SmithCheck { text:"These are independent copies made after the original app stopped"; checked<=>NativeProfile.attested; enabled:!NativeProfile.busy && !NativeProfile.reviewed; }
+    if !NativeProfile.deactivate: VerticalLayout {
+        spacing:6px;
+        Label { text:NativeProfile.reviewed ? "Enter the original key again to import the reviewed copy" : "Original copy encryption key"; }
+        ComboBox { model:["Original master key", "Separate database and artifact keys"]; current-index<=>NativeProfile.key-kind; enabled:!NativeProfile.busy && !NativeProfile.reviewed; }
+        if NativeProfile.key-kind==0: LineEdit { placeholder-text:"64 hexadecimal characters"; input-type:password; text<=>NativeProfile.master; enabled:!NativeProfile.busy; }
+        if NativeProfile.key-kind==1: VerticalLayout { spacing:6px; Label { text:"Database passphrase"; } LineEdit { input-type:password; text<=>NativeProfile.database-key; enabled:!NativeProfile.busy; } Label { text:"Artifact key (64 hexadecimal characters)"; } LineEdit { input-type:password; text<=>NativeProfile.artifact-key; enabled:!NativeProfile.busy; } }
+    }
+    if NativeProfile.status!="": Label { text:NativeProfile.status; }
+    if NativeProfile.report!="": Label { text:NativeProfile.report; }
+    if NativeProfile.reviewed: SmithCheck { text:NativeProfile.deactivate ? "Deactivate this import; retain both copies" : "Import the reviewed copy and open it as my local workspace"; checked<=>NativeProfile.confirmed; enabled:!NativeProfile.busy; }
+    HorizontalLayout {
+        spacing:8px;
+        if !NativeProfile.reviewed: SmithButton { text:"Inspect copy"; enabled:NativeProfile.supported && !NativeProfile.busy && NativeProfile.attested; clicked=>{NativeProfile.inspect();} }
+        if NativeProfile.reviewed && !NativeProfile.deactivate: SmithButton { text:"Import reviewed copy"; kind:"primary"; enabled:!NativeProfile.busy && NativeProfile.confirmed; clicked=>{NativeProfile.import();} }
+        if NativeProfile.reviewed && NativeProfile.deactivate: SmithButton { text:"Deactivate import"; enabled:!NativeProfile.busy && NativeProfile.confirmed; clicked=>{NativeProfile.deactivate-import();} }
+        if NativeProfile.reviewed: SmithButton { text:"Discard review"; enabled:!NativeProfile.busy; clicked=>{NativeProfile.discard();} }
+        if NativeProfile.can-open: SmithButton { text:"Open workspace"; kind:"primary"; enabled:!NativeProfile.busy; clicked=>{NativeProfile.open();} }
+        SmithButton { text:"Check status"; enabled:NativeProfile.supported && !NativeProfile.busy; clicked=>{NativeProfile.refresh();} }
+    }
+    SmithButton { text:NativeProfile.details ? "Hide recovery options" : "Recovery options"; clicked=>{NativeProfile.details=!NativeProfile.details;} }
+    if NativeProfile.details: VerticalLayout { spacing:6px; Label { text:"Deactivation is allowed only before later writes. It keeps the imported and original copies; no data is deleted."; } SmithButton { text:"Review import deactivation"; enabled:NativeProfile.supported && !NativeProfile.busy && !NativeProfile.reviewed && NativeProfile.attested; clicked=>{NativeProfile.inspect-deactivation();} } }
+}

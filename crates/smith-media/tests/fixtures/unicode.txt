@@ -1,0 +1,3 @@
+Hello, 世界 — Привет 👋🏽
+Café and Café remain distinct Unicode sequences.
+مرحبا بالعالم
