@@ -1,5 +1,8 @@
 # Smith
 
+[![Builds](https://github.com/lazarevtill/Smith/actions/workflows/native-build.yml/badge.svg)](https://github.com/lazarevtill/Smith/actions/workflows/native-build.yml)
+[Releases](https://github.com/lazarevtill/Smith/releases) · [Changelog](CHANGELOG.md) · [Build guide](docs/BUILDING.md) · [Release process](docs/RELEASING.md)
+
 Smith is a local native desktop AI workspace built with Rust and Slint. This
 repository contains the ongoing refactor: it preserves the original interface
 and assets while moving behavior into explicit domain, storage, runtime and
@@ -25,8 +28,8 @@ every original Smith feature or a qualified cross-platform release.
   immutable inference provenance, cancellation and owned-process cleanup.
 - Native GGUF runtime integration and bounded local agent/tool workflows.
 
-Imported historical image/tool-card projection is implemented in the backend;
-native card adoption is still in progress. Broader voice/media, model
+Imported historical images and literal tool/result cards are available in the
+native transcript with bounded decoding and source validation. Broader voice/media, model
 provisioning, integrations, memory learning and remaining platform workflows
 have separate work outstanding. Hardware inventory and a successful build do
 not prove GPU execution or optimized performance.
@@ -71,7 +74,8 @@ See [architecture](docs/ARCHITECTURE.md), the
 [MLX protocol](desktop/mlx/PROTOCOL.md), and
 [publication scope](PUBLICATION-SCOPE.json).
 
-CI compiles the normal backend and native UI independently on Windows and Linux.
+CI compiles the normal backend and native UI independently on Windows, Linux,
+macOS Apple silicon and macOS Intel. All eight jobs passed for `v0.1.0-alpha.1`.
 Hardware and packaged desktop tests follow separately. Synthetic tests are
 included; tests that require an owned desktop, native worker or real model are
 explicitly gated. Passing a synthetic fixture is not a language-quality or

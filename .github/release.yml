@@ -1,0 +1,12 @@
+changelog:
+  categories:
+    - title: Features
+      labels: [enhancement, feature]
+    - title: Fixes
+      labels: [bug, fix]
+    - title: Build and platform support
+      labels: [build, ci, platform]
+    - title: Documentation
+      labels: [documentation]
+    - title: Other changes
+      labels: ['*']

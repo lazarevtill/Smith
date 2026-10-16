@@ -2,7 +2,9 @@
 
 The public source tree contains the active build-only workflow [`.github/workflows/native-build.yml`](../.github/workflows/native-build.yml), triggered on push or manual dispatch. It uses one checkout of this repository and the self-contained reviewed UI snapshot under `vendor/smith-ui`. No separate source repository, original Git history, private token or model package is needed. The original GitLab upstream and anyLC are not CI inputs or publication destinations. Configuration validation is complete; **Windows/Linux build success must be established by the actual job results, not this document.**
 
-The [first hosted run](https://github.com/lazarevtill/Smith/actions/runs/38823025776), at source commit `98b28d4eb02d60776d22bdf22d2b113985a64012`, passed the Linux backend and both Linux/Windows native UI builds. The Windows backend failed because a globally compiled transcription function signature referenced Unix-only `libc::rlim_t`. The follow-up keeps that implementation under `cfg(unix)` and explicitly refuses non-Unix execution before spawning; it does not add Windows transcription support. The corrected source needs its own hosted build result. No runtime or hardware test ran in these jobs.
+The [first hosted run](https://github.com/lazarevtill/Smith/actions/runs/38823025776), at source commit `98b28d4eb02d60776d22bdf22d2b113985a64012`, passed the Linux backend and both Linux/Windows native UI builds. The Windows backend failed because a globally compiled transcription function signature referenced Unix-only `libc::rlim_t`. The follow-up keeps that implementation under `cfg(unix)` and explicitly refuses non-Unix execution before spawning; it does not add Windows transcription support. The corrected source subsequently passed all four Linux/Windows lanes at `6db20f7`. No runtime or hardware test ran in these jobs.
+
+The expanded [eight-lane run](https://github.com/lazarevtill/Smith/actions/runs/38894937123) passed on `e9f0e4246c5944b154ff15529e2636bc2db036b3`, tagged `v0.1.0-alpha.1`. These are compilation results, not packaged runtime or GPU qualification.
 
 ## Build inputs
 
@@ -19,16 +21,20 @@ Both Cargo lockfiles are required and builds use `--locked --release` with one c
 
 Successful job stdout retains the compiler/Cargo versions, source commit and dirty-state flag, executable/manifest/lockfile hashes, OS system/release/version/architecture, and the explicit `ImageOS`, `ImageVersion`, `RUNNER_OS`, `RUNNER_ARCH` allowlist. Missing runner fields remain null. No arbitrary environment or secret values are collected. Exact apt/MSVC/Windows SDK/OpenSSL dependency versions are **not captured** by this initial helper: runner-image metadata and Cargo locks alone do not reproduce all native dependencies. Preserve package-install/compiler-link diagnostics in the job logs; add a separately reviewed package manifest before claiming a reproducible distributable.
 
+The matrix additionally builds both components on `macos-15` (arm64) and
+`macos-15-intel` (x86_64), with the same component compiler versions.
+
 ## Local use on the target OS
 
 `ci/build_native.py` requires Python 3, Git, rustup with the named compiler already installed, and the platform's native C/C++ linker/development libraries. The helper itself installs nothing. These commands are compile operations; use them only in the assigned build lane:
 
 ```sh
 python ci/build_native.py --component backend --platform linux
-python ci/build_native.py --component native --platform linux
+python ci/build_native.py --component native --platform linux --ui-dir vendor/smith-ui
 ```
 
-On Windows use `--platform windows`. `--ui-dir` may explicitly select another complete manifested snapshot; the verifier still requires the reviewed source identity. `--offline` requires a populated dependency cache. `--dry-run` prints the exact command and performs no subprocess or writes, and is safe for inspecting any lane from another OS.
+On Windows use `--platform windows`; on Mac use `--platform macos-arm64` or
+`--platform macos-intel`. Native builds require `--ui-dir vendor/smith-ui`. `--ui-dir` may explicitly select another complete manifested snapshot; the verifier still requires the reviewed source identity. `--offline` requires a populated dependency cache. `--dry-run` prints the exact command and performs no subprocess or writes, and is safe for inspecting any lane from another OS.
 
 Linux dependencies in the workflow include the native compiler, pkg-config, OpenSSL development files, fontconfig/FreeType, X11, xkbcommon and Wayland development files. Windows requires the MSVC/Windows SDK toolchain and x64 MSVC OpenSSL headers/import library. The workflow binds the runner's existing `Program Files/OpenSSL/include` and `lib/VC/x64/MD/libcrypto.lib` explicitly and fails if that layout is absent. It does not silently switch crypto implementations. The [pinned rusqlite 0.37 build script](https://github.com/rusqlite/rusqlite/blob/v0.37.0/libsqlite3-sys/build.rs) compiles bundled SQLCipher and requires system crypto, with `OPENSSL_LIB_DIR` / `OPENSSL_INCLUDE_DIR` controlling Windows linkage. The [runner OpenSSL installer](https://github.com/actions/runner-images/blob/main/images/windows/scripts/build/Install-OpenSSL.ps1) documents its installation root. DLL redistribution and installer packaging remain separate work.
 
@@ -36,7 +42,7 @@ Linux dependencies in the workflow include the native compiler, pkg-config, Open
 
 The native build uses selected UI markup/assets from exact original commit `adfa145a7bd706f744d17c67bf017c24c1bef57f`, included as a snapshot rather than repository history. `vendor/smith-ui/SOURCE.json` records the original commit, each relative path, byte length and SHA256, plus provenance/license notes. The strict verifier checks every file, rejects missing/extra files, traversal, unknown fields, duplicate keys/paths, links/reparse points and declared-size/hash changes, and bounds manifest/file counts and bytes. This verifies consistency of the reviewed snapshot recorded in this source commit; it does not invent an application-wide license grant. See the root license-status document.
 
-Run `python ci/verify_ui_snapshot.py` to check the snapshot without Git, a compiler or network access. The build helper defaults to that directory and records the manifest hash/count/bytes in successful CI stdout. `desktop/slint/build.rs` also defaults to the snapshot, preserving an explicit `SMITH_ORIGINAL_UI_DIR` override for local development. CI always selects and verifies the snapshot; the direct Cargo override remains the caller's responsibility. Generated overlays are written only into Cargo build output, leaving the snapshot unchanged.
+Run `python ci/verify_ui_snapshot.py` to check the snapshot without Git, a compiler or network access. The build helper requires that explicit directory and records the manifest hash/count/bytes in successful CI stdout. `desktop/slint/build.rs` also defaults to the snapshot, preserving an explicit `SMITH_ORIGINAL_UI_DIR` override for local development. CI always selects and verifies the snapshot; the direct Cargo override remains the caller's responsibility. Generated overlays are written only into Cargo build output, leaving the snapshot unchanged.
 
 The workflow runs on push/manual dispatch, with only repository-content read permission and no persisted checkout credentials. It performs snapshot verification and native compilation. There are no artifact or cache uploads, release steps, model downloads, desktop launches, hardware queries or application tests. Each component/platform is a separate failing gate with `fail-fast: false`; there is no `continue-on-error`. Build failures must be fixed in actual platform code rather than concealed with mock feature flags. Successful build identity remains in job stdout; binaries/full local logs disappear with the ephemeral runner unless a separately reviewed retention/publishing step is added.
 

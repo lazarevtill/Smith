@@ -1,6 +1,10 @@
 name: Native compile gates (hardware later)
 on:
-  push: {}
+  push:
+    branches: ["**"]
+    paths-ignore:
+      - "**/*.md"
+      - ".github/release.yml"
   workflow_dispatch: {}
 permissions:
   contents: read
