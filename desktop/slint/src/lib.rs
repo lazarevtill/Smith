@@ -36,6 +36,13 @@ pub mod memory_bridge;
 pub mod historical_memory_bridge;
 #[path = "../../../src/historical_memory_contract.rs"]
 pub mod historical_memory_contract;
+#[path = "../../../src/historical_message_contract.rs"]
+pub mod historical_message_contract;
 pub mod historical_presentation;
+pub mod historical_source_bridge;
 
 pub mod extensions_bridge;
+
+pub mod historical_message_bridge;
+
+pub mod platform_ui;

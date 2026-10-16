@@ -4,21 +4,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=SMITH_ORIGINAL_UI_DIR");
     #[cfg(feature = "native-ui")]
     {
-        // The public source tree includes a reviewed, hash-manifested snapshot.
-        // CI verifies SOURCE.json before compilation. An explicit local override
-        // remains available; this build script never downloads any source.
         let configured = std::env::var_os("SMITH_ORIGINAL_UI_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../vendor/smith-ui")
-            });
-        let root = configured
+            .expect("Set SMITH_ORIGINAL_UI_DIR to the reviewed original smith/crates/smith-ui directory; this scaffold never downloads or vendors it");
+        let root = std::path::PathBuf::from(configured)
             .canonicalize()
-            .expect("Reviewed UI snapshot must exist in vendor/smith-ui or SMITH_ORIGINAL_UI_DIR");
-        println!(
-            "cargo:rerun-if-changed={}",
-            root.join("SOURCE.json").display()
-        );
+            .expect("Original UI directory must already exist");
         let entry = root.join("ui/app-window.slint");
         assert!(entry.is_file(), "Original MainWindow markup is missing");
         println!("cargo:rerun-if-changed={}", root.join("ui").display());
@@ -31,9 +21,16 @@ fn main() {
             std::path::PathBuf::from(std::env::var_os("OUT_DIR").unwrap()).join("reviewed-ui");
         build_overlay::copy_selected_tree(&root.join("ui"), &output.join("ui"));
         build_overlay::copy_selected_tree(&root.join("assets"), &output.join("assets"));
+        std::fs::copy(
+            "ui/native-platform.slint",
+            output.join("ui/native-platform.slint"),
+        )
+        .unwrap();
+        println!("cargo:rerun-if-changed=ui/native-platform.slint");
         let mut source = build_overlay::apply_documents(build_overlay::apply_window(
             std::fs::read_to_string(&entry).unwrap(),
         ));
+        source = format!("import {{ NativePlatform }} from \"native-platform.slint\";\nexport {{ NativePlatform }}\n{}", source);
         source = format!("import {{ NativeSettings }} from \"native-settings.slint\";\nexport {{ NativeSettings }}\n{}",source);
         std::fs::copy(
             "ui/native-settings.slint",
@@ -197,6 +194,8 @@ fn main() {
             "window-maximize",
             "window-close",
             "window-drag",
+            "native-original-details",
+            "native-original-navigation",
             "native-back",
             "native-forward",
             "native-undo",

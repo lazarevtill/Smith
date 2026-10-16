@@ -12,7 +12,17 @@ import time
 from verify_ui_snapshot import verify_snapshot
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = {'linux': 'x86_64-unknown-linux-gnu', 'windows': 'x86_64-pc-windows-msvc'}
+REVIEWED_UI_COMMIT = 'adfa145a7bd706f744d17c67bf017c24c1bef57f'
+TARGETS = {'linux': 'x86_64-unknown-linux-gnu', 'windows': 'x86_64-pc-windows-msvc',
+           'macos-arm64': 'aarch64-apple-darwin', 'macos-intel': 'x86_64-apple-darwin'}
+HOSTS = {'linux': ('linux', ('x86_64', 'amd64')), 'windows': ('windows', ('x86_64', 'amd64')),
+         'macos-arm64': ('darwin', ('arm64', 'aarch64')), 'macos-intel': ('darwin', ('x86_64', 'amd64'))}
+
+
+def matching_host(lane, system, machine):
+    expected_os, architectures = HOSTS[lane]
+    return system.lower() == expected_os and machine.lower() in architectures
+
 COMPONENTS = {
     'backend': ('1.89.0', 'Cargo.toml', 'smith-next'),
     'native': ('1.92.0', 'desktop/slint/Cargo.toml', 'smith-native-desktop'),
@@ -35,7 +45,22 @@ def output(command, **kwargs):
 
 
 def verify_ui(path):
-    return verify_snapshot(path)
+    if (path / "SOURCE.json").is_file():
+        return verify_snapshot(path)
+    path = path.resolve(strict=True)
+    checkout = Path(output(['git', '-C', str(path), 'rev-parse', '--show-toplevel'])).resolve()
+    if path != checkout / 'crates/smith-ui':
+        raise ValueError('UI path must be crates/smith-ui in its separately selected reviewed checkout')
+    revision = output(['git', '-C', str(checkout), 'rev-parse', 'HEAD'])
+    if revision != REVIEWED_UI_COMMIT:
+        raise ValueError('UI source commit differs from the exact reviewed original revision')
+    changed = output(['git', '-C', str(checkout), 'status', '--porcelain', '--untracked-files=all',
+                      '--', 'crates/smith-ui'])
+    if changed:
+        raise ValueError('Reviewed UI source has local changes or untracked files')
+    if not (path / 'ui/app-window.slint').is_file() or not (path / 'assets').is_dir():
+        raise ValueError('Reviewed UI markup/assets are missing')
+    return path, revision
 
 
 def digest(path):
@@ -65,8 +90,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--component', choices=COMPONENTS, required=True)
     parser.add_argument('--platform', choices=TARGETS, required=True)
-    parser.add_argument('--ui-dir', type=Path, default=ROOT / 'vendor/smith-ui',
-                        help='Explicit snapshot directory; defaults to this repository vendor/smith-ui')
+    parser.add_argument('--ui-dir', type=Path)
     parser.add_argument('--offline', action='store_true', help='Require existing Cargo dependencies')
     parser.add_argument('--dry-run', action='store_true', help='Print command only; perform no subprocess or write')
     args = parser.parse_args()
@@ -76,8 +100,8 @@ def main():
         print(json.dumps({'command': command, 'build_only': True,
                           'ui_source_required': args.component == 'native'}, indent=2))
         return
-    if platform.system().lower() != args.platform or platform.machine().lower() not in ('x86_64', 'amd64'):
-        raise ValueError('Run on the matching native x64 OS; this script does not pretend cross-compilation is native CI')
+    if not matching_host(args.platform, platform.system(), platform.machine()):
+        raise ValueError('Run on the matching native OS and architecture; this script does not pretend cross-compilation is native CI')
     for key in ('RUSTC_BOOTSTRAP', 'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'RUSTC', 'RUSTC_WRAPPER',
                 'RUSTC_WORKSPACE_WRAPPER'):
         if os.environ.get(key):
@@ -88,9 +112,11 @@ def main():
     version = output(['rustup', 'run', toolchain, 'rustc', '-vV'])
     if f'release: {toolchain}\n' not in version + '\n' or f'host: {target}\n' not in version + '\n':
         raise ValueError('Selected compiler version/host differs from the declared build lane')
-    ui_snapshot = None
+    ui_revision = None
     if args.component == 'native':
-        ui_dir, ui_snapshot = verify_ui(args.ui_dir)
+        if args.ui_dir is None:
+            raise ValueError('Native build requires explicit --ui-dir; no UI checkout is discovered/downloaded')
+        ui_dir, ui_revision = verify_ui(args.ui_dir)
         env['SMITH_ORIGINAL_UI_DIR'] = str(ui_dir)
     # Never share a target directory with a developer or another CI component.
     target_dir = ROOT / 'target/ci' / args.platform / args.component
@@ -108,7 +134,7 @@ def main():
               'command': command, 'cargo_lock_sha256': lock_hash,
               'manifest_sha256': digest(ROOT / manifest), 'source_commit': source_commit,
               'source_has_changes': source_changed, 'build_environment': build_environment(env),
-              'reviewed_ui_snapshot': ui_snapshot, 'build_only': True,
+              'reviewed_ui_source': ui_revision, 'build_only': True,
               'runtime_tested': False, 'hardware_qualified': False, 'published': False}
     began = time.monotonic()
     with log.open('x', encoding='utf-8') as stream:
@@ -134,7 +160,6 @@ def main():
                       'cargo_lock_sha256': lock_hash, 'manifest_sha256': report['manifest_sha256'],
                       'executable_sha256': report.get('executable_sha256'),
                       'executable_bytes': report.get('executable_bytes'),
-                      'reviewed_ui_snapshot': ui_snapshot,
                       'build_environment': report['build_environment'],
                       'runtime_tested': False, 'hardware_qualified': False}))
     if not report['passed']:

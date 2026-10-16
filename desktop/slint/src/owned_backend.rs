@@ -366,6 +366,40 @@ impl Transport for OwnedTransport {
         self.owner.alive()?;
         Ok(result)
     }
+    fn historical_cards(
+        &mut self,
+        request: &crate::historical_message_bridge::CardsRequest,
+        body: &mut crate::historical_message_bridge::ResponseBody,
+    ) -> Result<crate::historical_message_bridge::Headers> {
+        self.owner.alive()?;
+        let result = http::historical_read(
+            self.owner.address,
+            &self.owner.secret,
+            &request.path(),
+            request.session(),
+            crate::historical_message_contract::MAX_CARD_BYTES,
+            body,
+        );
+        self.owner.alive()?;
+        result
+    }
+    fn historical_image(
+        &mut self,
+        request: &crate::historical_message_bridge::ImageRequest,
+        body: &mut crate::historical_message_bridge::ResponseBody,
+    ) -> Result<crate::historical_message_bridge::Headers> {
+        self.owner.alive()?;
+        let result = http::historical_read(
+            self.owner.address,
+            &self.owner.secret,
+            &request.path(),
+            request.session(),
+            crate::historical_message_contract::MAX_IMAGE_BYTES,
+            body,
+        );
+        self.owner.alive()?;
+        result
+    }
     fn event_snapshot(&mut self, path: &str, session: &str) -> Result<Option<Value>> {
         self.owner.alive()?;
         let result = http::event(self.owner.address, &self.owner.secret, path, session)?;

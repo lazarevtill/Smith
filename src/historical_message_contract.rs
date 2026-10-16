@@ -14,6 +14,40 @@ pub const MAX_CARD_BYTES: usize = 512 * 1024;
 pub const MAX_ANCESTORS: usize = 4096;
 pub const MAX_ANCESTOR_BYTES: usize = 1024 * 1024;
 
+/// Captured from an admitted conversation, never inferred from archive order.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageSelection {
+    pub chat_id: String,
+    pub chat_version: i64,
+    pub active_leaf: String,
+    pub message_id: String,
+}
+impl MessageSelection {
+    pub fn valid(&self) -> bool {
+        self.chat_version >= 0
+            && [&self.chat_id, &self.active_leaf, &self.message_id]
+                .into_iter()
+                .all(|id| !id.is_empty() && id.len() <= 1024 && !id.chars().any(char::is_control))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceMapping {
+    pub source: MessageSource,
+    pub original_message_id: String,
+    pub original_session_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectedMessageSource {
+    pub selection: MessageSelection,
+    pub message_status: String,
+    pub original_source: SourceMapping,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageSource {

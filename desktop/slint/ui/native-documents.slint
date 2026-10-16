@@ -1,3 +1,4 @@
+import { NativePlatform } from "native-platform.slint";
 import { LineEdit, TextEdit, ComboBox } from "std-widgets.slint";
 import { Palette, SmithButton } from "theme.slint";
 export global NativeDocuments {
@@ -48,7 +49,7 @@ export component NativeArtifactControls inherits VerticalLayout {
     if NativeDocuments.pending: SmithButton{text:"Save reviewed original to Artifacts";enabled:!NativeDocuments.busy;clicked=>{NativeDocuments.promote();}}
     HorizontalLayout {
         spacing: 8px;
-        SmithButton { text: "Export opened original…"; enabled: NativeDocuments.opened && !NativeDocuments.busy; clicked => { NativeDocuments.export(); } }
+        SmithButton { text: "Export opened original…"; enabled: NativePlatform.pickers && NativeDocuments.opened && !NativeDocuments.busy; clicked => { NativeDocuments.export(); } }
         SmithButton { text: "Save visible answer"; enabled: NativeDocuments.can-save-answer && !NativeDocuments.busy; clicked => { NativeDocuments.save-answer(); } }
         SmithButton { text: NativeDocuments.generator-open ? "Close table export" : "Create table document"; enabled: !NativeDocuments.busy; clicked => { NativeDocuments.generator-open = !NativeDocuments.generator-open; } }
     }

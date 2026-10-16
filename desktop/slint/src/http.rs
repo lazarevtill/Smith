@@ -408,6 +408,7 @@ impl Write for DeadlineSocket {
     }
 }
 struct Response {
+    security_headers: std::collections::BTreeMap<String, String>,
     reader: BufReader<DeadlineSocket>,
     code: u16,
     remaining: usize,
@@ -474,6 +475,7 @@ fn start(
         .nth(1)
         .and_then(|s| s.parse().ok())
         .ok_or("Malformed backend status.")?;
+    let mut security_headers = std::collections::BTreeMap::new();
     let mut total = status.len();
     let mut length = None;
     let mut chunked = false;
@@ -487,6 +489,16 @@ fn start(
             break;
         }
         let (name, value) = value.split_once(':').ok_or("Malformed backend header.")?;
+        let lower = name.to_ascii_lowercase();
+        if matches!(
+            lower.as_str(),
+            "content-type" | "cache-control" | "x-content-type-options" | "x-smith-content-sha256"
+        ) && security_headers
+            .insert(lower, value.trim().to_owned())
+            .is_some()
+        {
+            return Err("Duplicate backend security header.".into());
+        }
         if name.eq_ignore_ascii_case("content-length") {
             if length.is_some() {
                 return Err("Duplicate backend content length.".into());
@@ -517,6 +529,7 @@ fn start(
         return Err("Unbounded or ambiguous backend response.".into());
     }
     Ok(Response {
+        security_headers,
         reader,
         code,
         remaining: length.unwrap_or(0),
@@ -663,4 +676,46 @@ pub(crate) fn download(
         data.extend(chunk);
     }
     Ok(data)
+}
+
+// Only called by OwnedTransport using paths minted by private CardsRequest or
+// ImageRequest constructors. This is not the generic document download route.
+pub(crate) fn historical_read(
+    address: SocketAddr,
+    owner: &str,
+    path: &str,
+    session: &str,
+    limit: usize,
+    body: &mut crate::historical_message_bridge::ResponseBody,
+) -> Result<crate::historical_message_bridge::Headers> {
+    let mut response = start(
+        address,
+        owner,
+        "GET",
+        path,
+        Some(session),
+        &[],
+        "application/json",
+        0,
+        limit,
+        Duration::from_secs(15),
+    )?;
+    if response.code != 200 {
+        return Err(format!(
+            "HTTP {}: original-message read rejected.",
+            response.code
+        ));
+    }
+    while let Some(chunk) = response.chunk()? {
+        body.write_all(&chunk)
+            .map_err(|_| "Original-message response exceeds its limit.")?;
+    }
+    let mut headers = response.security_headers;
+    Ok(crate::historical_message_bridge::Headers {
+        status: response.code,
+        content_type: headers.remove("content-type").unwrap_or_default(),
+        content_sha256: headers.remove("x-smith-content-sha256"),
+        cache_control: headers.remove("cache-control").unwrap_or_default(),
+        content_type_options: headers.remove("x-content-type-options").unwrap_or_default(),
+    })
 }

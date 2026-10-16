@@ -1,4 +1,5 @@
 //! Actual bounded HTTP parsing against a newly owned loopback server.
+use smith_native_bridge::historical_message_bridge;
 mod bridge {
     pub type Result<T> = std::result::Result<T, String>;
 }

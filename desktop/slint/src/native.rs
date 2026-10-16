@@ -28,6 +28,8 @@ mod extensions_ui;
 mod historical_ui;
 #[path = "native_memory.rs"]
 mod memory_ui;
+#[path = "native_message_cards.rs"]
+mod message_cards_ui;
 #[path = "native_mlx.rs"]
 mod mlx_ui;
 #[path = "native_profile.rs"]
@@ -71,9 +73,14 @@ enum Command {
     Transcription(transcription_ui::Action),
     Memory(u64, memory_ui::Action),
     Historical(u64, historical_ui::Action),
+    Original(u64, message_cards_ui::Action),
     Stop,
 }
 struct Update {
+    original_response: Option<(
+        u64,
+        crate::bridge::Result<crate::historical_source_bridge::HistoricalMessage>,
+    )>,
     epoch: u64,
     view: View,
     intent: Option<Intent>,
@@ -109,6 +116,11 @@ struct Update {
 }
 #[derive(Default)]
 struct UiState {
+    original_message: Option<crate::historical_source_bridge::HistoricalMessage>,
+    original_generation: u64,
+    original_pending: bool,
+    original_screen_generation: Rc<std::cell::Cell<u64>>,
+    original_seen_screen_generation: u64,
     epoch: NavigationEpoch,
     view: View,
     intent: Option<Intent>,
@@ -268,6 +280,7 @@ impl Driver {
                 let mut transcription_response = false;
                 let mut memory_response = None;
                 let mut historical_response = false;
+                let mut original_response = None;
                 let command_response = command.is_ok();
                 let result = match command {
                     Ok((_, Command::Stop)) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -318,6 +331,12 @@ impl Driver {
                                 let result = bridge.save_draft();
                                 let _ = reply.send(result.clone());
                                 result
+                            }
+                            Command::Original(generation, action) => {
+                                let result = action.execute(&mut bridge);
+                                let error = result.as_ref().err().cloned();
+                                original_response = Some((generation, result));
+                                error.map_or(Ok(()), Err)
                             }
                             Command::Historical(generation, action) => {
                                 historical_generation = generation;
@@ -396,6 +415,7 @@ impl Driver {
                     historical_panel = Default::default();
                 }
                 let update = Update {
+                    original_response,
                     epoch,
                     view: bridge.view.clone(),
                     intent: bridge.intent().ok(),
@@ -450,6 +470,15 @@ impl Driver {
             }
         });
         let state = Rc::new(RefCell::new(UiState::default()));
+        let platform = crate::platform_ui::Platform::current();
+        let platform_ui = window.global::<NativePlatform>();
+        platform_ui.set_mlx(platform.mlx());
+        platform_ui.set_owned_runtime(platform.owned_runtime());
+        platform_ui.set_pickers(platform.pickers());
+        platform_ui.set_clipboard(platform.pickers());
+        platform_ui.set_engines(strings(
+            platform.engines().into_iter().map(str::to_owned).collect(),
+        ));
         wire_unavailable(window);
         settings_ui::wire(window, &state, &tx);
         profile_ui::wire(window, &state, &tx);
@@ -459,6 +488,7 @@ impl Driver {
         transcription_ui::wire(window, &state, &tx);
         memory_ui::wire(window, &state, &tx);
         historical_ui::wire(window, &state, &tx);
+        message_cards_ui::wire(window, &state, &tx);
         documents_ui::wire(window, &state, &tx);
         mlx_ui::wire(window, &state, &tx);
         {
@@ -827,10 +857,18 @@ impl Driver {
                     Command::Settings(settings_ui::Action::Reload),
                 ));
             }
+            let screen_generation = state.original_screen_generation.get();
+            if screen_generation != state.original_seen_screen_generation {
+                state.original_seen_screen_generation = screen_generation;
+                message_cards_ui::invalidate(&mut state);
+                project(window, &state, &View::default());
+            }
             if state.view.available
                 && state.pending_navigation.is_none()
                 && window.get_active_view() != state.screen
             {
+                message_cards_ui::invalidate(&mut state);
+                project(window, &state, &View::default());
                 state.screen = window.get_active_view();
                 let place = Place {
                     screen: state.screen,
@@ -841,6 +879,14 @@ impl Driver {
         }
         while let Ok(update) = self.rx.try_recv() {
             let mut state = self.state.borrow_mut();
+            if update.view.available
+                && update
+                    .original_response
+                    .as_ref()
+                    .is_some_and(|(generation, _)| *generation != state.original_generation)
+            {
+                continue;
+            }
             if !state.epoch.accepts(update.epoch)
                 && update.view.available
                 && !update.profile_response
@@ -888,6 +934,7 @@ impl Driver {
                 }
                 continue;
             }
+            let mut original_changed = false;
             if update.command_response {
                 state.export_notice = None;
             }
@@ -914,6 +961,8 @@ impl Driver {
                 transcription_ui::clear(window, &mut state);
                 memory_ui::clear(window, &mut state);
                 historical_ui::clear(window, &mut state);
+                message_cards_ui::invalidate(&mut state);
+                original_changed = true;
                 profile_ui::clear_keys(window);
                 state.documents_pending = false;
                 state.export_pending = false;
@@ -967,6 +1016,23 @@ impl Driver {
             }
             let old = state.view.clone();
             state.view = update.view;
+            if state
+                .original_message
+                .as_ref()
+                .is_some_and(|p| p.view(&state.view, &state.epoch).is_err())
+            {
+                message_cards_ui::invalidate(&mut state);
+                original_changed = true;
+            }
+            if let Some((generation, result)) = update.original_response {
+                if generation == state.original_generation {
+                    state.original_pending = false;
+                    state.original_message = result
+                        .ok()
+                        .filter(|p| p.view(&state.view, &state.epoch).is_ok());
+                    original_changed = true;
+                }
+            }
             state.intent = update.intent;
             state.document_reviews = update.document_reviews;
             state.feedback_reviews = update.feedback_reviews;
@@ -1097,7 +1163,8 @@ impl Driver {
             } else if update.error.is_some() {
                 state.pending_navigation = None;
             }
-            project(window, &state, &old);
+            let empty = View::default();
+            project(window, &state, if original_changed { &empty } else { &old });
             documents_ui::project(window, &state, &old);
             window.set_session_loading(false);
             window.set_chat_operation("".into());
@@ -1203,6 +1270,8 @@ fn before_navigation(
         return false;
     }
     capture_draft(&window, tx, state);
+    message_cards_ui::invalidate(state);
+    project(&window, state, &View::default());
     true
 }
 fn wire_management(
@@ -1644,6 +1713,7 @@ fn task_item(value: &serde_json::Value) -> ActivityItem {
     }
 }
 fn project(window: &MainWindow, state: &UiState, old: &View) {
+    window.set_native_original_pending(state.original_pending);
     window.global::<Palette>().set_dark(false);
     window.set_appearance("Light".into());
     if old.chats != state.view.chats
@@ -1674,7 +1744,7 @@ fn project(window: &MainWindow, state: &UiState, old: &View) {
                     crate::messages::presentation(&m.role, &text, m.reasoning.as_deref());
                 let reasoning = presentation.reasoning.to_owned();
                 let reasoning_derived = presentation.derived;
-                let segments = crate::messages::segments(presentation.answer)
+                let mut segments = crate::messages::segments(presentation.answer)
                     .into_iter()
                     .map(|segment| match segment {
                         crate::messages::Segment::Markdown(text) => MessageSegment {
@@ -1697,7 +1767,9 @@ fn project(window: &MainWindow, state: &UiState, old: &View) {
                         },
                     })
                     .collect::<Vec<_>>();
+                segments.extend(message_cards_ui::segments(state, &m.id));
                 ChatMessage {
+                    historical_available: message_cards_ui::eligible(m),
                     id: m.id.clone().into(),
                     role: m.role.clone().into(),
                     text: text.into(),

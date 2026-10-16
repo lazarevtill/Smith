@@ -66,6 +66,20 @@ pub trait Transport: Send + 'static {
     fn download(&mut self, _path: &str, _session: &str) -> Result<Vec<u8>> {
         Err("Document downloads are unavailable on this transport.".into())
     }
+    fn historical_cards(
+        &mut self,
+        _request: &crate::historical_message_bridge::CardsRequest,
+        _body: &mut crate::historical_message_bridge::ResponseBody,
+    ) -> Result<crate::historical_message_bridge::Headers> {
+        Err("Original-message cards are unavailable on this transport.".into())
+    }
+    fn historical_image(
+        &mut self,
+        _request: &crate::historical_message_bridge::ImageRequest,
+        _body: &mut crate::historical_message_bridge::ResponseBody,
+    ) -> Result<crate::historical_message_bridge::Headers> {
+        Err("Original-message images are unavailable on this transport.".into())
+    }
     fn event_snapshot(&mut self, _path: &str, _session: &str) -> Result<Option<Value>> {
         Ok(None)
     }

@@ -1,5 +1,5 @@
-//! Read-only snapshot adapter for the encrypted imported archive. Not registered
-//! in any router. Hold the application's profile lease across capture and reply,
+//! Read-only snapshot adapter for the encrypted imported archive. The owned
+//! profile router holds the application's profile lease across capture and reply;
 //! release its DB mutex after capture, then project/decode in bounded workers.
 #[path = "historical_message_projection.rs"]
 pub mod projection;
@@ -7,6 +7,9 @@ pub use projection::{contract, Error, Result};
 use projection::{Ancestry, ArchivedMessage, MessageCards, MessageSource, Reason, ValidatedImage};
 use rusqlite::{params, Connection};
 use std::collections::BTreeSet;
+#[path = "historical_message_source.rs"]
+mod selected_source;
+pub use selected_source::resolve;
 
 fn storage(_: rusqlite::Error) -> Error {
     Error("The retained original archive could not be read; no data was changed.")

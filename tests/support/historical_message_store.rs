@@ -1,6 +1,8 @@
 use super::*;
 use contract::{ExactRow, ExactValue, ResultLink};
 use serde_json::json;
+#[path = "historical_message_source.rs"]
+mod selected_source_tests;
 
 fn db() -> Connection {
     let db = Connection::open_in_memory().unwrap();

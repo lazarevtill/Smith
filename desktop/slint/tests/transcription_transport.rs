@@ -1,4 +1,5 @@
 //! Actual bounded native HTTP transport, with an owned loopback peer only.
+use smith_native_bridge::historical_message_bridge;
 mod bridge {
     pub type Result<T> = std::result::Result<T, String>;
 }

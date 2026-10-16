@@ -123,6 +123,10 @@ fn row(s: &UiState, id: &str) -> Result<EntryReview> {
     )
 }
 fn setup_settings(_w: &MainWindow, s: &UiState, r: &PreparedReview) -> Result<SetupSettings> {
+    let platform = crate::platform_ui::Platform::current();
+    if !platform.owned_runtime() || (r.entry().format == ModelFormat::Mlx && !platform.mlx()) {
+        return Err("This saved model cannot run on this platform. Its saved files and settings are retained.".into());
+    }
     match r.entry().format {
         ModelFormat::Gguf => Ok(SetupSettings::Gguf {
             reviewed: s

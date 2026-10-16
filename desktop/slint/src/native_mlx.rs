@@ -119,6 +119,10 @@ pub(super) fn wire(
             if s.mlx_pending || !s.view.available {
                 return;
             }
+            if !crate::platform_ui::Platform::current().mlx() {
+                s.last_error = Some("Native MLX requires the Apple silicon macOS build.".into());
+                return;
+            }
             match f(&w, &s) {
                 Ok(a) => {
                     s.mlx_pending = true;
@@ -259,7 +263,9 @@ pub(super) fn project(window: &MainWindow, s: &mut UiState) {
     let value = &s.view.mlx;
     let running = value["operation"]["status"] == "running";
     ui.set_thinking_supported(crate::mlx::supports_thinking_control(value));
-    ui.set_available(s.view.available && !value.is_null());
+    ui.set_available(
+        crate::platform_ui::Platform::current().mlx() && s.view.available && !value.is_null(),
+    );
     ui.set_busy(s.mlx_pending || running);
     ui.set_can_cancel(running && value["operation"]["kind"] != "unload");
     ui.set_can_unload(!value["runtime"].is_null() && !running);

@@ -1,3 +1,4 @@
+import { NativePlatform } from "native-platform.slint";
 import { LineEdit, ScrollView, ComboBox } from "std-widgets.slint";
 import { Palette, SmithButton, SmithCheck, EmptyState, StatusPill } from "theme.slint";
 export struct CatalogItem {id:string,name:string,format:string,selected:bool}
@@ -28,11 +29,11 @@ export component NativeCatalogPane inherits ScrollView {
    Label{text:NativeCatalog.replacing?"Replace this saved selection":"New saved selection";font-weight:600;}
    Label{text:"Saved name";}LineEdit{text<=>NativeCatalog.label;enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;}
    Label{text:"GGUF runtime executable";}
-   HorizontalLayout{spacing:8px;LineEdit{text<=>NativeCatalog.executable;enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;}SmithButton{text:"Choose…";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.pick-runtime();}}}
+   HorizontalLayout{spacing:8px;LineEdit{text<=>NativeCatalog.executable;enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;}SmithButton{text:"Choose…";enabled:NativePlatform.pickers &&!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.pick-runtime();}}}
    Label{text:"GGUF model file";}
-   HorizontalLayout{spacing:8px;LineEdit{text<=>NativeCatalog.model;enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;}SmithButton{text:"Choose…";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.pick-model();}}}
-   HorizontalLayout{spacing:8px;SmithButton{text:"Save GGUF selection";kind:"primary";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.save-gguf();}}SmithButton{text:"Save reviewed MLX setup";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.save-mlx();}}SmithButton{text:"Close";enabled:!NativeCatalog.busy;clicked=>{NativeCatalog.editor-open=false;}}}
-   Label{text:"For MLX, inspect the chosen package in Inference first. Saving records the named files; it does not load them.";}
+   HorizontalLayout{spacing:8px;LineEdit{text<=>NativeCatalog.model;enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;}SmithButton{text:"Choose…";enabled:NativePlatform.pickers &&!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.pick-model();}}}
+   HorizontalLayout{spacing:8px;SmithButton{text:"Save GGUF selection";kind:"primary";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.save-gguf();}}if NativePlatform.mlx: SmithButton{text:"Save reviewed MLX setup";enabled:!NativeCatalog.busy&&!NativeCatalog.blocked;clicked=>{NativeCatalog.save-mlx();}}SmithButton{text:"Close";enabled:!NativeCatalog.busy;clicked=>{NativeCatalog.editor-open=false;}}}
+   if NativePlatform.mlx: Label{text:"For MLX, inspect the chosen package in Inference first. Saving records the named files; it does not load them.";}
   }
   if NativeCatalog.rows.length==0:Label{text:NativeCatalog.trash?"No saved entries in Trash.":"No matching saved models.";}
   for row in NativeCatalog.rows:Rectangle{background:Palette.raised;border-color:Palette.border;border-width:1px;border-radius:Palette.radius;min-height:108px;

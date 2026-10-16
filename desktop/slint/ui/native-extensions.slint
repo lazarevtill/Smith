@@ -1,3 +1,4 @@
+import { NativePlatform } from "native-platform.slint";
 import { LineEdit, TextEdit, ScrollView, ComboBox } from "std-widgets.slint";
 import { Palette, SmithButton, SmithCheck } from "theme.slint";
 export struct ExtensionItem { id:string,name:string,detail:string,enabled:bool }
@@ -48,7 +49,7 @@ export component NativeExtensionsToolbar inherits VerticalLayout {
     }
     if NativeExtensions.import-open:VerticalLayout{spacing:8px;
         Label{text:"Import a selected plugin directory or a record retained by Data → Import. Imported instructions start disabled.";}
-        HorizontalLayout{spacing:8px;LineEdit{text<=>NativeExtensions.import-directory;placeholder-text:"Plugin directory";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready;}SmithButton{text:"Choose…";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready;clicked=>{NativeExtensions.choose-plugin();}}SmithButton{text:"Review plugin";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready&&NativeExtensions.import-directory!="";clicked=>{NativeExtensions.review-plugin();}}}
+        HorizontalLayout{spacing:8px;LineEdit{text<=>NativeExtensions.import-directory;placeholder-text:"Plugin directory";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready;}SmithButton{text:"Choose…";enabled:NativePlatform.pickers &&!NativeExtensions.busy&&!NativeExtensions.import-ready;clicked=>{NativeExtensions.choose-plugin();}}SmithButton{text:"Review plugin";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready&&NativeExtensions.import-directory!="";clicked=>{NativeExtensions.review-plugin();}}}
         HorizontalLayout{spacing:8px;ComboBox{model:["Original skills","Original methods","Original recipes"];current-index<=>NativeExtensions.original-kind;enabled:!NativeExtensions.busy;}SmithButton{text:"Browse originals";enabled:!NativeExtensions.busy;clicked=>{NativeExtensions.browse-original();}}SmithButton{text:"Next";enabled:!NativeExtensions.busy&&NativeExtensions.original-next;clicked=>{NativeExtensions.next-original();}}Label{text:NativeExtensions.original-status;horizontal-stretch:1;}}
         for name[index] in NativeExtensions.original-rows:HorizontalLayout{spacing:8px;Label{text:name;horizontal-stretch:1;}SmithButton{text:"Review";enabled:!NativeExtensions.busy&&!NativeExtensions.import-ready;clicked=>{NativeExtensions.review-original(index);}}}
         if NativeExtensions.import-ready:VerticalLayout{spacing:6px;

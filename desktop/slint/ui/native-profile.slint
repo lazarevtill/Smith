@@ -1,3 +1,4 @@
+import { NativePlatform } from "native-platform.slint";
 import { LineEdit, ComboBox } from "std-widgets.slint";
 import { Palette, SmithButton, SmithCheck } from "theme.slint";
 export global NativeProfile {
@@ -29,9 +30,9 @@ export component NativeProfileControls inherits VerticalLayout {
     Label { text:"Import independent copies from the stopped original Smith app. Your current workspace and the source copies are retained."; }
     if !NativeProfile.supported: Label { text:"Copied-profile import is available when this window owns its local workspace."; }
     Label { text:"Original profile copy (contains smith.db)"; }
-    HorizontalLayout { spacing:8px; LineEdit { text<=>NativeProfile.source; enabled:!NativeProfile.busy && !NativeProfile.reviewed; } SmithButton { text:"Choose…"; enabled:NativeProfile.supported && !NativeProfile.busy && !NativeProfile.reviewed; clicked=>{NativeProfile.choose-source();} } }
+    HorizontalLayout { spacing:8px; LineEdit { text<=>NativeProfile.source; enabled:!NativeProfile.busy && !NativeProfile.reviewed; } SmithButton { text:"Choose…"; enabled:NativePlatform.pickers &&NativeProfile.supported && !NativeProfile.busy && !NativeProfile.reviewed; clicked=>{NativeProfile.choose-source();} } }
     Label { text:"Original managed-files copy"; }
-    HorizontalLayout { spacing:8px; LineEdit { text<=>NativeProfile.managed; enabled:!NativeProfile.busy && !NativeProfile.reviewed; } SmithButton { text:"Choose…"; enabled:NativeProfile.supported && !NativeProfile.busy && !NativeProfile.reviewed; clicked=>{NativeProfile.choose-managed();} } }
+    HorizontalLayout { spacing:8px; LineEdit { text<=>NativeProfile.managed; enabled:!NativeProfile.busy && !NativeProfile.reviewed; } SmithButton { text:"Choose…"; enabled:NativePlatform.pickers &&NativeProfile.supported && !NativeProfile.busy && !NativeProfile.reviewed; clicked=>{NativeProfile.choose-managed();} } }
     SmithCheck { text:"These are independent copies made after the original app stopped"; checked<=>NativeProfile.attested; enabled:!NativeProfile.busy && !NativeProfile.reviewed; }
     if !NativeProfile.deactivate: VerticalLayout {
         spacing:6px;

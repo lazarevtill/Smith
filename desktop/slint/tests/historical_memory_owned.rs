@@ -69,8 +69,12 @@ fn executable(name: &str) -> PathBuf {
     path.canonicalize().unwrap()
 }
 fn fixture(root: &Path, key: &Key) {
+    fixture_args(root, key, &[]);
+}
+fn fixture_args(root: &Path, key: &Key, args: &[String]) {
     let mut child = Command::new(executable("SMITH_NATIVE_TEST_HISTORICAL_FIXTURE"))
         .arg(root)
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -261,6 +265,63 @@ fn assert_encrypted(root: &Path, key: &Key) {
             );
         }
     }
+}
+
+#[test]
+#[ignore = "Requires frozen normal backend with source mapping and synthetic encrypted historical fixture"]
+fn historical_selected_source_owned_transport_restart_and_navigation() {
+    use smith_native_bridge::bridge::NavigationEpoch;
+    let temp = Temp::new();
+    let key = Key::new();
+    let source = temp.0.join("copy");
+    fixture(&source, &key);
+    let original = tree(&source);
+    let backend = executable("SMITH_NATIVE_TEST_BACKEND");
+    let owner = OwnedBackend::launch(&backend, &temp.0.join("host")).unwrap();
+    let mut b = bridge(&owner);
+    let mut workflow = ProfileWorkflow::new(&temp.0.join("host")).unwrap();
+    import(&mut workflow, &mut b, &source, &key);
+    b.open("session").unwrap();
+    let mut epoch = NavigationEpoch::default();
+    let lookup = b.review_message_source("root", &epoch).unwrap();
+    let receipt = b.fetch_message_source(&lookup, &epoch).unwrap();
+    let mapping = receipt.mapping(&b, &epoch).unwrap().clone();
+    assert_eq!(mapping.original_message_id, "root");
+    assert_eq!(mapping.original_session_id, "session");
+    assert!(mapping.source.valid());
+    assert!(b.fetch_message_source(&lookup, &epoch).is_err());
+    epoch.advance();
+    assert!(receipt.mapping(&b, &epoch).is_err());
+    let old_lookup = b.review_message_source("root", &epoch).unwrap();
+    let destination = temp.0.join("host/local-workspace/imported");
+    let archive = std::fs::read(destination.join("import.db")).unwrap();
+    assert_dormant(&owner, &mut b);
+    owner.stop().unwrap();
+
+    let owner = OwnedBackend::launch(&backend, &temp.0.join("host")).unwrap();
+    b = bridge(&owner);
+    b.open("session").unwrap();
+    assert!(b.fetch_message_source(&old_lookup, &epoch).is_err());
+    let lookup = b.review_message_source("root", &epoch).unwrap();
+    let receipt = b.fetch_message_source(&lookup, &epoch).unwrap();
+    assert_eq!(receipt.mapping(&b, &epoch).unwrap(), &mapping);
+    assert_dormant(&owner, &mut b);
+    let mut workflow = ProfileWorkflow::new(&temp.0.join("host")).unwrap();
+    let review = workflow
+        .review_rollback(&mut b, selection(&source))
+        .unwrap();
+    let ticket = workflow.rollback(&mut b, review).unwrap();
+    let status = poll(&mut workflow, &mut b, &ticket);
+    assert!(status.operation.unwrap().succeeded());
+    assert_eq!(status.selection, Selection::Default);
+    assert!(receipt.mapping(&b, &epoch).is_err());
+    assert_eq!(
+        std::fs::read(destination.join("import.db")).unwrap(),
+        archive
+    );
+    assert!(tree(&source) == original);
+    assert_encrypted(&destination, &key);
+    owner.stop().unwrap();
 }
 
 #[test]
@@ -530,5 +591,224 @@ fn historical_trash_cas_receipts_restart_restore_keep_archive_and_refuse_rollbac
     );
     assert!(tree(&source) == original);
     assert_encrypted(&destination, &key);
+    owner.stop().unwrap();
+}
+
+#[cfg(feature = "native-ui")]
+#[test]
+#[ignore = "Requires frozen source-mapping backend, card fixture and software native renderer"]
+fn native_original_cards_images_and_navigation_owned() {
+    use slint::{ComponentHandle, Model};
+    use smith_native_bridge::{
+        bridge::NavigationEpoch,
+        native::{register_reviewed_fonts, Driver, MainWindow},
+    };
+    fn wait(w: &MainWindow, d: &Driver, predicate: impl Fn() -> bool) {
+        let until = Instant::now() + Duration::from_secs(15);
+        loop {
+            d.pump(w);
+            if predicate() {
+                return;
+            }
+            assert!(
+                Instant::now() < until,
+                "Native cards deadline: {}",
+                w.get_status_text()
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    fn kinds(w: &MainWindow, id: &str) -> Vec<String> {
+        w.get_messages()
+            .iter()
+            .filter(|m| m.id == id)
+            .flat_map(|m| {
+                m.segments
+                    .iter()
+                    .map(|s| s.kind.to_string())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+    fn click_rail(w: &MainWindow, y: f32) {
+        let position = slint::LogicalPosition::new(32.0, y);
+        let button = slint::platform::PointerEventButton::Left;
+        w.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved { position });
+        w.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button });
+        w.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button });
+    }
+    fn capture(w: &MainWindow, name: &str) {
+        if let Some(root) = std::env::var_os("SMITH_NATIVE_TEST_CAPTURES") {
+            std::fs::create_dir_all(&root).unwrap();
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(200));
+            let pixels = w.window().take_snapshot().unwrap();
+            image::save_buffer(
+                std::path::Path::new(&root).join(format!("{name}.png")),
+                pixels.as_bytes(),
+                pixels.width(),
+                pixels.height(),
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+        }
+    }
+    slint::platform::set_platform(Box::new(i_slint_backend_testing::TestingBackend::new(
+        i_slint_backend_testing::TestingBackendOptions {
+            renderer_name: Some("software".into()),
+            mock_time: true,
+            threading: false,
+            ..Default::default()
+        },
+    )))
+    .unwrap();
+    register_reviewed_fonts().unwrap();
+    let temp = Temp::new();
+    let key = Key::new();
+    let source = temp.0.join("copy");
+    let witness = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    witness.set_nonblocking(true).unwrap();
+    fixture_args(
+        &source,
+        &key,
+        &[witness.local_addr().unwrap().port().to_string()],
+    );
+    let original = tree(&source);
+    let owner = OwnedBackend::launch(
+        &executable("SMITH_NATIVE_TEST_BACKEND"),
+        &temp.0.join("host"),
+    )
+    .unwrap();
+    let mut b = bridge(&owner);
+    let mut workflow = ProfileWorkflow::new(&temp.0.join("host")).unwrap();
+    import(&mut workflow, &mut b, &source, &key);
+    let destination = temp.0.join("host/local-workspace/imported");
+    let archive = std::fs::read(destination.join("import.db")).unwrap();
+    b.open("session").unwrap();
+    let epoch = NavigationEpoch::default();
+    let card = b.historical_message("root", &epoch, None).unwrap();
+    assert_eq!(card.view(&b.view, &epoch).unwrap().0.images.len(), 9);
+    for index in 0..3 {
+        let image = b.historical_message("root", &epoch, Some(index)).unwrap();
+        let (_, preview) = image.view(&b.view, &epoch).unwrap();
+        let preview = preview.unwrap();
+        assert_eq!(
+            preview.rgba.len(),
+            (preview.width * preview.height * 4) as usize
+        );
+        assert!(preview.width <= 1024 && preview.height <= 1024);
+    }
+    for index in 3..9 {
+        assert!(b.historical_message("root", &epoch, Some(index)).is_err());
+    }
+    assert!(b.historical_message("branch1", &epoch, None).is_err()); // inactive sibling
+    let rollback = workflow
+        .review_rollback(&mut b, selection(&source))
+        .unwrap();
+    drop(rollback); // eligibility check only, before the later explicit branch change
+
+    let w = MainWindow::new().unwrap();
+    w.window().set_size(slint::PhysicalSize::new(1200, 800));
+    let d = Driver::attach_transport(&w, owner.transport());
+    w.show().unwrap();
+    wait(&w, &d, || d.ready());
+    let index = w
+        .get_sessions()
+        .iter()
+        .position(|c| c.id == "session")
+        .unwrap();
+    w.invoke_select_session(index as i32);
+    wait(&w, &d, || w.get_messages().iter().any(|m| m.id == "root"));
+    assert!(
+        w.get_messages()
+            .iter()
+            .find(|m| m.id == "root")
+            .unwrap()
+            .historical_available
+    );
+    assert!(
+        !w.get_messages()
+            .iter()
+            .find(|m| m.id == "cards-final")
+            .unwrap()
+            .historical_available
+    );
+    w.set_pinned_to_bottom(false);
+    w.invoke_native_original_details("root".into(), -1);
+    wait(&w, &d, || {
+        kinds(&w, "root")
+            .iter()
+            .any(|k| k == "historical-image-load")
+    });
+    capture(&w, "original-image-references");
+    w.invoke_native_original_details("root".into(), 0);
+    wait(&w, &d, || {
+        kinds(&w, "root").iter().any(|k| k == "historical-image")
+    });
+    capture(&w, "original-image-preview");
+    w.set_active_view(1);
+    d.pump(&w);
+    assert!(!kinds(&w, "root")
+        .iter()
+        .any(|k| k.starts_with("historical-")));
+    w.set_active_view(0);
+    d.pump(&w);
+    assert!(!kinds(&w, "root")
+        .iter()
+        .any(|k| k.starts_with("historical-")));
+    // A queued response cannot survive leaving and returning to the same screen.
+    w.invoke_native_original_details("root".into(), 0);
+    click_rail(&w, 144.0);
+    assert_eq!(w.get_active_view(), 1);
+    click_rail(&w, 92.0);
+    assert_eq!(w.get_active_view(), 0);
+    d.pump(&w);
+    let until = Instant::now() + Duration::from_millis(600);
+    while Instant::now() < until {
+        d.pump(&w);
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!kinds(&w, "root")
+        .iter()
+        .any(|k| k.starts_with("historical-")));
+
+    // Explicit synthetic branch selection lets the original tool card surface
+    // prove literal malformed arguments and historical clarification stay inert.
+    b.branch(&b.intent().unwrap(), "tool").unwrap();
+    w.invoke_select_session(index as i32);
+    wait(&w, &d, || {
+        w.get_messages().iter().any(|m| m.id == "branch1")
+    });
+    w.invoke_native_original_details("branch1".into(), -1);
+    wait(&w, &d, || {
+        kinds(&w, "branch1").iter().filter(|k| *k == "tool").count() == 2
+    });
+    let tool = w.get_messages().iter().find(|m| m.id == "branch1").unwrap();
+    assert!(tool
+        .segments
+        .iter()
+        .any(|s| s.text.contains("{literal invalid")));
+    assert!(!tool.segments.iter().any(|s| s.kind == "plan"));
+    capture(&w, "original-tool-cards");
+    w.invoke_native_original_details("tool".into(), -1);
+    wait(&w, &d, || {
+        kinds(&w, "tool").iter().any(|k| k == "historical-note")
+    });
+    capture(&w, "original-tool-result");
+    assert_dormant(&owner, &mut b);
+    assert!(
+        witness.accept().is_err(),
+        "Historical remote reference was fetched"
+    );
+    assert!(tree(&source) == original);
+    assert_eq!(
+        std::fs::read(destination.join("import.db")).unwrap(),
+        archive
+    );
+    assert_encrypted(&destination, &key);
+    drop(d);
+    w.hide().unwrap();
     owner.stop().unwrap();
 }

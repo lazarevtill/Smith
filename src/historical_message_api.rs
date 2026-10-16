@@ -1,6 +1,5 @@
-//! Pending read-only route wrapper. Register only inside the existing Host's
-//! profile admission router; never serve this router directly or add query-token
-//! bypasses. This file intentionally is not registered by the isolated slice.
+//! Read-only routes registered inside the existing owned profile admission
+//! router. Never serve this router directly or add query-token bypasses.
 #[path = "historical_message_store.rs"]
 mod store;
 use crate::{ApiError, ApiResult, App};
@@ -70,6 +69,48 @@ async fn cards(State(app): State<Arc<App>>, Path(row): Path<i64>) -> ApiResult<R
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct SourceQuery {
+    chat_id: String,
+    chat_version: i64,
+    active_leaf: String,
+}
+async fn selected_source(
+    State(app): State<Arc<App>>,
+    Path(message_id): Path<String>,
+    Query(query): Query<SourceQuery>,
+) -> ApiResult<Response> {
+    let selection = store::contract::MessageSelection {
+        chat_id: query.chat_id,
+        chat_version: query.chat_version,
+        active_leaf: query.active_leaf,
+        message_id,
+    };
+    if !selection.valid() {
+        return Err(ApiError(
+            StatusCode::BAD_REQUEST,
+            "Use the displayed conversation and message identity.".into(),
+        ));
+    }
+    let owned = app.clone();
+    let receipt = tracked(&app, move || {
+        let db = owned
+            .db
+            .lock()
+            .map_err(|_| store::Error("The historical archive is unavailable."))?;
+        store::resolve(&db, &selection)
+    })
+    .await?;
+    Ok((
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        axum::Json(receipt),
+    )
+        .into_response())
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ImageQuery {
     import_id: String,
     source_schema: u32,
@@ -125,6 +166,10 @@ async fn image(
 }
 pub fn routes() -> Router<Arc<App>> {
     Router::new()
+        .route(
+            "/api/legacy-import/message-source/{message_id}",
+            get(selected_source),
+        )
         .route("/api/legacy-import/message-cards/{row}", get(cards))
         .route(
             "/api/legacy-import/message-cards/{row}/images/{index}/bytes",

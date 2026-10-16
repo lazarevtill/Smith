@@ -56,14 +56,9 @@ impl Action {
         }
     }
 }
-fn provider(index: i32) -> &'static str {
-    match index {
-        1 => "ollama",
-        2 => "openai",
-        3 => "managed",
-        4 => "mlx",
-        _ => "mock",
-    }
+fn provider(index: i32) -> crate::bridge::Result<&'static str> {
+    crate::platform_ui::resolve(&crate::platform_ui::Platform::current().providers(), index)?
+        .ok_or_else(|| "Choose a connection available on this platform.".into())
 }
 fn target(state: &UiState) -> crate::bridge::Result<Config> {
     let config = state
@@ -125,16 +120,10 @@ fn intent(window: &MainWindow, state: &UiState) -> crate::bridge::Result<Value> 
         2 => "allow_verified_local",
         _ => "ask",
     });
-    value["overrides"]["backend"] = match ui.get_backend_index() {
-        1 => json!("llama_cpu"),
-        2 => json!("llama_metal"),
-        3 => json!("llama_cuda"),
-        4 => json!("llama_hip"),
-        5 => json!("llama_sycl"),
-        6 => json!("llama_vulkan"),
-        7 => json!("mlx_metal"),
-        _ => Value::Null,
-    };
+    value["overrides"]["backend"] = json!(crate::platform_ui::resolve(
+        &crate::platform_ui::Platform::current().backends(),
+        ui.get_backend_index(),
+    )?);
     value["overrides"]["context_tokens"] = numeric(ui.get_context(), "Context", 128, 1_048_576)?;
     value["overrides"]["threads"] = numeric(ui.get_threads(), "Threads", 1, 1024)?;
     value["overrides"]["gpu_layers"] = numeric(ui.get_layers(), "GPU layers", 0, 10000)?;
@@ -189,7 +178,7 @@ fn intent(window: &MainWindow, state: &UiState) -> crate::bridge::Result<Value> 
 fn require_saved_form(window: &MainWindow, state: &UiState) -> crate::bridge::Result<Config> {
     let c = target(state)?;
     let ui = window.global::<NativeSettings>();
-    if provider(ui.get_provider_index()) != c.provider
+    if provider(ui.get_provider_index())? != c.provider
         || (matches!(c.provider.as_str(), "ollama" | "openai")
             && ui.get_endpoint().as_str() != c.endpoint)
     {
@@ -201,12 +190,17 @@ fn require_saved_form(window: &MainWindow, state: &UiState) -> crate::bridge::Re
 }
 fn make_action(name: &str, window: &MainWindow, state: &UiState) -> crate::bridge::Result<Action> {
     let ui = window.global::<NativeSettings>();
+    if matches!(name, "inspect" | "probe" | "apply" | "cancel" | "unload")
+        && !crate::platform_ui::Platform::current().owned_runtime()
+    {
+        return Err("Local runtime launch is not implemented for this platform.".into());
+    }
     Ok(match name {
         "reload" => Action::Reload,
         "refresh" => Action::Refresh,
         "save" => Action::Save(
             target(state)?,
-            provider(ui.get_provider_index()).into(),
+            provider(ui.get_provider_index())?.into(),
             ui.get_endpoint().to_string(),
         ),
         "test" => Action::Test(require_saved_form(window, state)?),
@@ -379,19 +373,33 @@ pub(super) fn wire(
 pub(super) fn populate(window: &MainWindow, state: &mut UiState) {
     let ui = window.global::<NativeSettings>();
     let c = &state.view.config;
-    ui.set_provider_index(match c.provider.as_str() {
-        "ollama" => 1,
-        "openai" => 2,
-        "managed" => 3,
-        "mlx" => 4,
-        _ => 0,
+    let platform = crate::platform_ui::Platform::current();
+    ui.set_provider_choices(strings(
+        platform
+            .providers()
+            .iter()
+            .map(|c| c.label.to_owned())
+            .collect(),
+    ));
+    ui.set_backend_choices(strings(
+        platform
+            .backends()
+            .iter()
+            .map(|c| c.label.to_owned())
+            .collect(),
+    ));
+    let provider_index =
+        crate::platform_ui::selected(&platform.providers(), Some(c.provider.as_str()));
+    ui.set_provider_index(provider_index);
+    let requested_engine = state
+        .catalog_setup_engine
+        .take()
+        .unwrap_or(if c.provider == "mlx" { 1 } else { 0 });
+    ui.set_engine_index(if requested_engine == 1 && !platform.mlx() {
+        0
+    } else {
+        requested_engine
     });
-    ui.set_engine_index(
-        state
-            .catalog_setup_engine
-            .take()
-            .unwrap_or(if c.provider == "mlx" { 1 } else { 0 }),
-    );
     ui.set_endpoint(c.endpoint.clone().into());
     ui.set_token("".into());
     let preferences = &state.view.settings.setup["preferences"];
@@ -409,16 +417,9 @@ pub(super) fn populate(window: &MainWindow, state: &mut UiState) {
         Some("allow_verified_local") => 2,
         _ => 1,
     });
-    ui.set_backend_index(match value["overrides"]["backend"].as_str() {
-        Some("llama_cpu") => 1,
-        Some("llama_metal") => 2,
-        Some("llama_cuda") => 3,
-        Some("llama_hip") => 4,
-        Some("llama_sycl") => 5,
-        Some("llama_vulkan") => 6,
-        Some("mlx_metal") => 7,
-        _ => 0,
-    });
+    let saved_backend = value["overrides"]["backend"].as_str();
+    let backend_index = crate::platform_ui::selected(&platform.backends(), saved_backend);
+    ui.set_backend_index(backend_index);
     let number = |key: &str| {
         value["overrides"][key]
             .as_u64()
@@ -463,6 +464,28 @@ pub(super) fn project(window: &MainWindow, state: &mut UiState) {
     let ui = window.global::<NativeSettings>();
     let setup = &state.view.settings.setup;
     let native = &state.view.settings.native;
+    // Status follows confirmed saved state independently of editable fields.
+    // A successful save must clear a formerly incompatible saved-value warning.
+    let platform = crate::platform_ui::Platform::current();
+    let provider = state.view.config.provider.as_str();
+    ui.set_unavailable_provider(if state.view.available && crate::platform_ui::selected(&platform.providers(), Some(provider)) < 0 {
+        format!("Saved connection {provider} is unavailable on this platform. Choose a supported connection to change it.").into()
+    } else { "".into() });
+    let saved_backend = setup["preferences"]["intent"]["overrides"]["backend"].as_str();
+    ui.set_unavailable_backend(
+        if state.view.available
+            && crate::platform_ui::selected(&platform.backends(), saved_backend) < 0
+        {
+            format!(
+                "Saved backend {} is unavailable here. Choose an available backend to change it.",
+                saved_backend.unwrap_or("unknown")
+            )
+            .into()
+        } else {
+            "".into()
+        },
+    );
+
     ui.set_available(state.view.available && !setup.is_null());
     let running =
         setup["operation"]["status"] == "running" || native["operation"]["status"] == "running";

@@ -10,6 +10,113 @@ fn replace(source: &mut String, from: &str, to: &str, expected: usize) {
     *source = source.replace(from, to);
 }
 pub fn apply_window(mut source: String) -> String {
+    replace(
+        &mut source,
+        "enabled: !root.export-session-saving;",
+        "enabled: NativePlatform.pickers && !root.export-session-saving;",
+        1,
+    );
+    replace(
+        &mut source,
+        "enabled: !root.code-block-saving;",
+        "enabled: NativePlatform.pickers && !root.code-block-saving;",
+        1,
+    );
+    for (name, capability) in [
+        ("cc-ta", "clipboard"),
+        ("copy-ta", "clipboard"),
+        ("attach-touch", "pickers"),
+    ] {
+        replace(
+            &mut source,
+            &format!("{name} := TouchArea {{"),
+            &format!("{name} := TouchArea {{ enabled: NativePlatform.{capability};"),
+            1,
+        );
+    }
+
+    // These original Windows provisioning actions have no implementation in
+    // the new app, including on Windows. Never offer host-shell substitutes.
+    for title in [
+        "ffmpeg (audio/video file + URL transcription)",
+        "WSL2 sandbox (safe tool / shell execution)",
+    ] {
+        let start_anchor = format!(
+            "                        SetupRow {{\n                            title: \"{title}\";"
+        );
+        assert_eq!(source.matches(&start_anchor).count(), 1);
+        let start = source.find(&start_anchor).unwrap();
+        let end = start
+            + source[start..].find("                        }\n").unwrap()
+            + "                        }\n".len();
+        source.replace_range(start..end, "");
+    }
+
+    // Invalidate synchronously in each actual navigation action. Property-change
+    // notifications can coalesce a leave/return before the next event-loop turn.
+    replace(
+        &mut source,
+        "root.active-view = ",
+        "root.native-original-navigation(); root.active-view = ",
+        10,
+    );
+    replace(&mut source, "    changed active-view => {", "    callback native-original-navigation();\n    changed active-view => {\n        root.native-original-navigation();", 1);
+    replace(
+        &mut source,
+        "    image: image,",
+        "    image: image,\n    action-index: int,",
+        1,
+    );
+    replace(
+        &mut source,
+        "export struct ChatMessage {",
+        "export struct ChatMessage {\n    historical-available: bool,",
+        1,
+    );
+    replace(&mut source, "    callback send(string);", "    callback native-original-details(string, int);\n    in property <bool> native-original-pending: false;\n    callback send(string);", 1);
+    replace(
+        &mut source,
+        "if seg.kind == \"image\": Rectangle {",
+        "if seg.kind == \"image\" || seg.kind == \"historical-image\": Rectangle {",
+        1,
+    );
+    replace(
+        &mut source,
+        "img-open-ta := TouchArea {",
+        "if seg.kind == \"image\": img-open-ta := TouchArea {",
+        1,
+    );
+    replace(
+        &mut source,
+        "                                                if seg.kind == \"tool\": Rectangle {",
+        r#"
+                                                if seg.kind == "historical-note": Text {
+                                                    text: seg.text; color: m.role == "user" ? Palette.user-text : Palette.text-muted;
+                                                    font-family: Palette.font-mono; font-size: 11px; wrap: word-wrap;
+                                                }
+                                                if seg.kind == "historical-image-load": SmithButton {
+                                                    text: seg.text; kind: "secondary"; height: 32px; width: 220px;
+                                                    background: Palette.raised; border-color: Palette.border;
+                                                    enabled: !root.native-original-pending;
+                                                    clicked => { root.native-original-details(m.id, seg.action-index); }
+                                                }
+                                                if seg.kind == "tool": Rectangle {"#,
+        1,
+    );
+    replace(
+        &mut source,
+        "                                        // Mirrors the DS CodeBlock copy affordance above",
+        r#"
+                                        if m.historical-available: SmithButton {
+                                            text: "Details"; kind: "secondary";
+                                            height: 28px; width: 84px;
+                                            enabled: !root.native-original-pending;
+                                            clicked => { root.native-original-details(m.id, -1); }
+                                        }
+                                        // Mirrors the DS CodeBlock copy affordance above"#,
+        1,
+    );
+
     replace(&mut source, "if root.status-text != \"\": Rectangle {\n        height: 36px;\n        width: 100%;\n        background: Palette.accent;", "if root.status-text != \"\": Rectangle {\n        height: 36px;\n        width: 100%;\n        background: Palette.button-primary;", 1);
     replace(
         &mut source,
@@ -361,6 +468,24 @@ pub fn copy_selected_tree(source: &Path, destination: &Path) {
 }
 
 pub fn apply_settings(mut source: String) -> String {
+    // Capability-based omission: startup registration/tray-only and WSL2
+    // provisioning are unimplemented on every target in this bridge.
+    for (title, next) in [
+        ("Startup & window", "Artifacts storage location"),
+        ("WSL2 sandbox", "Node identity"),
+    ] {
+        let anchor =
+            format!("                    Card {{\n                        title: \"{title}\";");
+        let next_anchor =
+            format!("                    Card {{\n                        title: \"{next}\";");
+        assert_eq!(source.matches(&anchor).count(), 1);
+        assert_eq!(source.matches(&next_anchor).count(), 1);
+        let start = source.find(&anchor).unwrap();
+        let end = source[start..].find(&next_anchor).unwrap() + start;
+        source.replace_range(start..end, "");
+    }
+    source = format!("import {{ NativePlatform }} from \"native-platform.slint\";\n{source}");
+
     source = format!("import {{ NativeProfileControls }} from \"native-profile.slint\";\nimport {{ NativeMlxControls }} from \"native-mlx.slint\";\nimport {{ NativeSettings, NativeConnectionControls, NativeSetupControls }} from \"native-settings.slint\";\n{}",source);
     replace(
         &mut source,
@@ -398,9 +523,10 @@ pub fn apply_settings(mut source: String) -> String {
         start..end,
         r#"                if root.active-tab == 3: VerticalLayout {
                     spacing: 14px;
-                    ComboBox {model:["GGUF · local runtime", "Apple MLX · native Metal"];current-index<=>NativeSettings.engine-index;}
-                    if NativeSettings.engine-index==0: Card { title: "Local inference"; NativeSetupControls {} }
-                    if NativeSettings.engine-index==1: Card { title: "Apple MLX"; NativeMlxControls {} }
+                    ComboBox {model:NativePlatform.engines;current-index<=>NativeSettings.engine-index;enabled:NativePlatform.owned-runtime;}
+                    if !NativePlatform.owned-runtime: Banner { kind:"warning"; text:"Local runtime launch is not available on this platform in this build."; }
+                    if NativePlatform.owned-runtime && NativeSettings.engine-index==0: Card { title: "Local inference"; NativeSetupControls {} }
+                    if NativePlatform.mlx && NativeSettings.engine-index==1: Card { title: "Apple MLX"; NativeMlxControls {} }
                 }
 
 "#,
@@ -546,6 +672,26 @@ pub fn apply_activity(mut source: String) -> String {
 }
 
 pub fn apply_transcribe(mut source: String) -> String {
+    source = format!("import {{ NativePlatform }} from \"native-platform.slint\";\n{source}");
+    replace(
+        &mut source,
+        "text: \"File…\";\n                    enabled: !root.busy;",
+        "text: \"File…\";\n                    enabled: NativePlatform.pickers && !root.busy;",
+        1,
+    );
+    replace(
+        &mut source,
+        "enabled: root.output != \"\";",
+        "enabled: NativePlatform.clipboard && root.output != \"\";",
+        1,
+    );
+    replace(
+        &mut source,
+        "enabled: root.output != \"\" && !root.busy;",
+        "enabled: NativePlatform.pickers && root.output != \"\" && !root.busy;",
+        1,
+    );
+
     source=format!("import {{ NativeTranscription, NativeTranscriptionSetup }} from \"native-transcription.slint\";\n{}",source);
     replace(&mut source,"            // source row: one box for URL or file path","            NativeTranscriptionSetup {}\n            // source row: explicit selected file",1);
     source=source.replace("Paste a YouTube/podcast link or pick an audio/video file. Transcription runs locally; summaries use your selected model.","Choose local audio up to 60 seconds. Canonical speech WAV supports 2 MiB; explicit WAV/AIFF/M4A normalization supports 8 MiB. Review the local executable and model below.");
@@ -569,6 +715,7 @@ pub fn apply_transcribe(mut source: String) -> String {
 }
 
 pub fn apply_extensions(mut source: String) -> String {
+    replace(&mut source, "Connect an external tool server. Use a direct executable (node / python / uvx) — Windows .cmd shims like npx don't work over stdio.", "External tool server setup is not available in this build.", 1);
     source=format!("import {{ NativeExtensions, NativeExtensionsToolbar, NativePluginExtensions }} from \"native-extensions.slint\";\n{source}");
     let start = source
         .find("component ExtTab inherits Rectangle {")
@@ -627,7 +774,7 @@ pub fn apply_extensions(mut source: String) -> String {
         "A learned, reusable workflow. Enabled methods are injected into every agent run.",
         "A reusable workflow. Enabled methods are captured on later tasks you create.",
     );
-    source=source.replace("Define a tool as a command template with {placeholders}. The model fills them; the command runs in the WSL2 sandbox.","Retain a command template and parameter schema. WSL2 recipe execution is unavailable in this build; saving or enabling never runs it.");
+    source=source.replace("Define a tool as a command template with {placeholders}. The model fills them; the command runs in the WSL2 sandbox.","Retain a command template and parameter schema. Recipe execution is unavailable in this build; saving or enabling never runs it.");
     source=source.replace("JSON command templates the model can call as tools, run in the sandbox. Add one above.","Retained command templates. Execution remains unavailable; records can be edited, trashed and restored.");
     source
 }

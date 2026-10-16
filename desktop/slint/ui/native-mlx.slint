@@ -1,3 +1,4 @@
+import { NativePlatform } from "native-platform.slint";
 import { LineEdit, ComboBox, TextEdit } from "std-widgets.slint";
 import { Palette, SmithButton, SmithCheck } from "theme.slint";
 export global NativeMlx {
@@ -19,8 +20,8 @@ export component NativeMlxControls inherits VerticalLayout {
     Label {text:"Apple MLX · choose a local safetensors model package.";}
     SmithButton {text:"Refresh MLX settings";enabled:!NativeMlx.busy;clicked=>{NativeMlx.refresh();}}
     SmithCheck {text:"Advanced worker and review details";checked<=>NativeMlx.advanced;}
-    if NativeMlx.advanced: HorizontalLayout {spacing:8px;LineEdit{placeholder-text:"Native MLX worker path";text<=>NativeMlx.worker;}SmithButton{text:"Choose worker…";enabled:!NativeMlx.busy;clicked=>{NativeMlx.pick-worker();}}}
-    HorizontalLayout {spacing:8px;LineEdit{placeholder-text:"Existing safetensors package directory";text<=>NativeMlx.directory;}SmithButton{text:"Choose package…";enabled:!NativeMlx.busy;clicked=>{NativeMlx.pick-directory();}}}
+    if NativeMlx.advanced: HorizontalLayout {spacing:8px;LineEdit{placeholder-text:"Native MLX worker path";text<=>NativeMlx.worker;}SmithButton{text:"Choose worker…";enabled:NativePlatform.pickers &&!NativeMlx.busy;clicked=>{NativeMlx.pick-worker();}}}
+    HorizontalLayout {spacing:8px;LineEdit{placeholder-text:"Existing safetensors package directory";text<=>NativeMlx.directory;}SmithButton{text:"Choose package…";enabled:NativePlatform.pickers &&!NativeMlx.busy;clicked=>{NativeMlx.pick-directory();}}}
     LineEdit {placeholder-text:"Local model label";text<=>NativeMlx.model-id;}
     if NativeMlx.advanced: HorizontalLayout {spacing:8px;LineEdit{placeholder-text:"Worker provenance";text<=>NativeMlx.source;}LineEdit{placeholder-text:"Exact source revision";text<=>NativeMlx.source-revision;}}
     ComboBox {model:["Chat · requires admitted template","Raw completion · separate scratch output"];current-index<=>NativeMlx.capability-index;}

@@ -26,7 +26,7 @@ class BuildPlans(unittest.TestCase):
         self.assertEqual(command[command.index('--features') + 1], 'native-ui')
         self.assertEqual(command[-1], '--offline')
 
-    def test_all_four_dry_runs_do_not_spawn_or_write(self):
+    def test_all_eight_dry_runs_do_not_spawn_or_write(self):
         for component in build_native.COMPONENTS:
             for target in build_native.TARGETS:
                 with self.subTest(component=component, target=target), \
@@ -41,14 +41,32 @@ class BuildPlans(unittest.TestCase):
                     run.assert_not_called()
                     mkdir.assert_not_called()
 
-    def test_snapshot_refusal_propagates_without_git_or_compiler(self):
+    def test_mac_architectures_cannot_be_misreported_as_native_cross_compiles(self):
+        self.assertTrue(build_native.matching_host('macos-arm64', 'Darwin', 'arm64'))
+        self.assertTrue(build_native.matching_host('macos-intel', 'Darwin', 'x86_64'))
+        self.assertFalse(build_native.matching_host('macos-intel', 'Darwin', 'arm64'))
+        self.assertFalse(build_native.matching_host('macos-arm64', 'Linux', 'aarch64'))
+        self.assertFalse(build_native.matching_host('windows', 'Linux', 'x86_64'))
+        self.assertEqual(build_native.TARGETS['macos-arm64'], 'aarch64-apple-darwin')
+        self.assertEqual(build_native.TARGETS['macos-intel'], 'x86_64-apple-darwin')
+
+    def test_reviewed_vendor_snapshot_is_verified_without_git_or_credentials(self):
         path = Path('/synthetic/vendor/smith-ui')
-        with patch.object(build_native, 'verify_snapshot', side_effect=ValueError('snapshot mismatch')) as verify, \
+        with patch.object(Path, 'is_file', return_value=True), \
+                patch.object(Path, 'resolve', autospec=True, side_effect=lambda p, **_: p), \
+                patch.object(build_native, 'verify_snapshot', return_value=(path, {'files': 96})) as verify, \
                 patch.object(build_native, 'output') as output:
-            with self.assertRaisesRegex(ValueError, 'snapshot mismatch'):
+            self.assertEqual(build_native.verify_ui(path), (path, {'files': 96}))
+            verify.assert_called_once_with(path)
+            output.assert_not_called()
+
+    def test_wrong_original_revision_refuses_before_status_or_build(self):
+        path = Path(__file__).resolve().parent.parent / 'crates/smith-ui'
+        with patch.object(Path, 'resolve', autospec=True, side_effect=lambda p, **_: p), \
+                patch.object(build_native, 'output', side_effect=[str(path.parent.parent), '0' * 40]) as output:
+            with self.assertRaisesRegex(ValueError, 'differs from the exact reviewed'):
                 build_native.verify_ui(path)
-        verify.assert_called_once_with(path)
-        output.assert_not_called()
+        self.assertEqual(output.call_count, 2)
 
     def test_environment_metadata_is_explicit_allowlist_bounded_and_has_no_secret_dump(self):
         evidence = build_native.build_environment({

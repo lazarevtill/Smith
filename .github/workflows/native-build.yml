@@ -14,6 +14,10 @@ jobs:
           - {runner: windows-2022, platform: windows, component: backend, toolchain: '1.89.0'}
           - {runner: ubuntu-24.04, platform: linux, component: native, toolchain: '1.92.0'}
           - {runner: windows-2022, platform: windows, component: native, toolchain: '1.92.0'}
+          - {runner: macos-15, platform: macos-arm64, component: backend, toolchain: '1.89.0'}
+          - {runner: macos-15, platform: macos-arm64, component: native, toolchain: '1.92.0'}
+          - {runner: macos-15-intel, platform: macos-intel, component: backend, toolchain: '1.89.0'}
+          - {runner: macos-15-intel, platform: macos-intel, component: native, toolchain: '1.92.0'}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
@@ -29,7 +33,7 @@ jobs:
           path: smith-next
           persist-credentials: false
           submodules: false
-      - name: Verify self-contained reviewed UI snapshot
+      - name: Verify reviewed vendored UI snapshot (no private source checkout)
         shell: bash
         working-directory: smith-next
         run: python ci/verify_ui_snapshot.py
@@ -56,12 +60,25 @@ jobs:
           }
           "OPENSSL_LIB_DIR=$cryptoLib" >> $env:GITHUB_ENV
           "OPENSSL_INCLUDE_DIR=$cryptoInclude" >> $env:GITHUB_ENV
+      - name: Bind macOS SQLCipher build dependency
+        if: runner.os == 'macOS' && matrix.component == 'backend'
+        shell: bash
+        run: |
+          brew install openssl@3 pkg-config
+          echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
+      - name: Verify every target's UI policy and reviewed markup (no models or host actions)
+        if: matrix.component == 'native'
+        shell: bash
+        working-directory: smith-next
+        env:
+          BUILD_TOOLCHAIN: ${{ matrix.toolchain }}
+        run: python ci/check_platform_ui.py --toolchain "$BUILD_TOOLCHAIN" --ui-dir vendor/smith-ui
       - name: Compile normal component (no model/runtime/desktop launch)
         shell: bash
         working-directory: smith-next
         env:
           BUILD_COMPONENT: ${{ matrix.component }}
           BUILD_PLATFORM: ${{ matrix.platform }}
-        run: python ci/build_native.py --component "$BUILD_COMPONENT" --platform "$BUILD_PLATFORM"
-      # Deliberately no upload-artifact, cache upload, release, push or test run.
+        run: python ci/build_native.py --component "$BUILD_COMPONENT" --platform "$BUILD_PLATFORM" --ui-dir vendor/smith-ui
+      # Deliberately no upload-artifact, cache upload, release, push, model execution or desktop launch.
       # A failed build remains a failed job; no continue-on-error or mock features.

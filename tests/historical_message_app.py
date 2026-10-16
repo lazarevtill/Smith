@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 import threading
 import time
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 ROOT = Path(__file__).resolve().parents[1]
 UNSET = object()
@@ -306,6 +306,39 @@ def dormant(app):
     require(tasks and all(not task['resumable'] for task in tasks), 'legacy-task-gained-resume-authority')
 
 
+def selected_source_path(selection):
+    return ('/legacy-import/message-source/' + quote(selection['message_id'], safe='') + '?' +
+            urlencode({key: selection[key] for key in ('chat_id', 'chat_version', 'active_leaf')}))
+
+
+def selected_source_receipt(app, expected_card, old_session):
+    conversation = app.request('/chats/session')
+    selection = {'chat_id': conversation['chat']['id'], 'chat_version': conversation['chat']['version'],
+                 'active_leaf': conversation['active_leaf'], 'message_id': 'root'}
+    require(selection['active_leaf'] == 'cards-final', 'unexpected-selected-branch')
+    path = selected_source_path(selection)
+    raw, headers = app.request(path, raw=True, cap=16384)
+    receipt = json.loads(raw)
+    require(headers['cache-control'] == 'no-store' and headers['x-content-type-options'] == 'nosniff',
+            'source-mapping-privacy-headers')
+    require(receipt['selection'] == selection and receipt['message_status'] == 'imported_reference',
+            'source-mapping-selection-receipt')
+    require(receipt['original_source'] == {'source': expected_card['source'],
+                                         'original_message_id': 'root', 'original_session_id': 'session'},
+            'source-mapping-exact-archive-receipt')
+    for key, value in [('chat_version', selection['chat_version'] + 1), ('active_leaf', 'branch1'),
+                       ('chat_id', 'different'), ('message_id', 'branch1')]:
+        app.request(selected_source_path({**selection, key: value}), want=409)
+    app.request(path, want=409, session=old_session)
+    app.request(path, want=409, session=None)
+    app.request(path + '&profile_session=' + app.session, want=409, session=None)
+    # Axum query-extractor failures are bounded plain text, not ApiError JSON.
+    app.request(path + '&unexpected=1', want=400, raw=True)
+    app.request(selected_source_path({**selection, 'chat_version': -1}), want=400, raw=True)
+    require(app.request('/chats/session') == conversation, 'mapping-mutated-current-conversation')
+    return path, receipt
+
+
 def encrypted(directory, master):
     for name in ('profile.sqlite3', 'import.db'):
         data = (directory / name).read_bytes()
@@ -330,6 +363,8 @@ def main():
     parser.add_argument('--fixture-sha256', required=True)
     parser.add_argument('--target-schema', type=int, required=True)
     parser.add_argument('--report', type=Path, required=True)
+    parser.add_argument('--source-mapping', action='store_true',
+                        help='Exercise the additive selected-message source mapping route.')
     args = parser.parse_args()
     binary, fixture, report = args.binary.resolve(), args.fixture.resolve(), args.report.resolve()
     require(not report.exists(), 'report-already-exists-preserve-previous-evidence')
@@ -395,6 +430,12 @@ def main():
             require(cards[original['id']]['source']['payload_sha256'] == hashlib.sha256(raw).hexdigest(),
                     'full-exact-source-payload-digest-mismatch')
         root_card = cards['root']
+        source_receipt = None
+        if args.source_mapping:
+            phase = 'authenticated-selected-source-mapping'
+            source_path, source_receipt = selected_source_receipt(app, root_card, old_session)
+            checks.append('selected-source-exact-chat-version-leaf-archive-receipt-with-stale-sibling-and-header-refusals')
+            phase = 'read-only-card-and-byte-reconciliation'
         require(root_card['source']['table'] == 'messages' and root_card['source']['source_schema'] == 25,
                 'source-receipt-mismatch')
         require(root_card['image_count'] == 9, 'image-order-count-mismatch')
@@ -466,6 +507,9 @@ def main():
         require(reopened['selection'] == 'imported' and app.session != old_session, 'profile-rotation-did-not-revoke')
         app.request(bytes_path(root_card, 0), want=409, session=old_session)
         require(app.request(f"/legacy-import/message-cards/{rows['root']}") == root_card, 'cards-changed-after-reader-drain')
+        if args.source_mapping:
+            app.request(source_path, want=409, session=old_session)
+            require(app.request(source_path) == source_receipt, 'mapping-changed-after-profile-rotation')
         checks.append('observed-active-reader-disconnect-drains-before-existing-destination-refusal-reopens-and-rejects-old-session')
 
         phase = 'disconnected-reader-process-drain-restart'
@@ -478,6 +522,10 @@ def main():
         require(app.session != old_session and app.status()['selection'] == 'imported', 'restart-profile-identity')
         app.request(bytes_path(root_card, 0), want=409, session=old_session)
         require(app.request(f"/legacy-import/message-cards/{rows['root']}") == root_card, 'cards-changed-after-restart')
+        if args.source_mapping:
+            app.request(source_path, want=409, session=old_session)
+            require(app.request(source_path) == source_receipt, 'mapping-changed-after-restart')
+            checks.append('selected-source-survives-encrypted-restart-and-rejects-revoked-session')
         current_originals = app.request('/legacy-import/records/messages?limit=100')['rows']
         require(current_originals == originals, 'exact-typed-originals-changed')
         require(inventory(source) == before and sha(destination / 'import.db') == archive_before,
@@ -499,6 +547,7 @@ def main():
                 'qualification-executable-changed')
         checks.append('read-only-deactivation-remains-eligible-retains-all-copies-and-zero-listener-connections')
         result = {'passed': True, 'synthetic_only': True, 'target_schema': args.target_schema,
+                  'selected_source_mapping_tested': args.source_mapping,
                   'app_sha256': args.binary_sha256, 'fixture_sha256': args.fixture_sha256,
                   'runner_sha256': sha(Path(__file__)), 'groups': len(checks), 'checks': checks,
                   'listener_connections': listener.connections, 'source_inventory_unchanged': True,

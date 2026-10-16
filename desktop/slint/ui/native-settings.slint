@@ -1,7 +1,12 @@
+import { NativePlatform } from "native-platform.slint";
 import { LineEdit, ComboBox } from "std-widgets.slint";
 import { Palette, SmithButton, SmithCheck } from "theme.slint";
 
 export global NativeSettings {
+    in property <[string]> provider-choices;
+    in property <[string]> backend-choices;
+    in property <string> unavailable-provider;
+    in property <string> unavailable-backend;
     in-out property <int> engine-index: 0;
     in-out property <bool> advanced;
     in-out property <bool> details;
@@ -75,10 +80,11 @@ export component NativeConnectionControls inherits VerticalLayout {
     spacing: 10px;
     Label { text: "Choose your inference connection, then test it to list available models."; }
     ComboBox {
-        model: ["Demo", "Ollama", "OpenAI-compatible", "Owned GGUF model", "Owned MLX model"];
+        model: NativeSettings.provider-choices;
         current-index <=> NativeSettings.provider-index;
         enabled: NativeSettings.available && !NativeSettings.busy;
     }
+    if NativeSettings.unavailable-provider!="": Label { text:NativeSettings.unavailable-provider; }
     if NativeSettings.provider-index == 1 || NativeSettings.provider-index == 2: LineEdit {
         placeholder-text: "http://127.0.0.1:11434 or http://127.0.0.1:8080/v1";
         text <=> NativeSettings.endpoint;
@@ -86,7 +92,7 @@ export component NativeConnectionControls inherits VerticalLayout {
     if NativeSettings.provider-index >= 3: Label { text: "Select and review an existing runtime and model in Inference. Loading the reviewed plan selects this connection."; }
     HorizontalLayout {
         spacing: 8px;
-        SmithButton { text: "Save connection"; kind: "primary"; enabled: NativeSettings.available && !NativeSettings.busy && NativeSettings.provider-index < 3; clicked => { NativeSettings.save(); } }
+        SmithButton { text: "Save connection"; kind: "primary"; enabled: NativeSettings.provider-index>=0 && NativeSettings.available && !NativeSettings.busy && NativeSettings.provider-index < 3; clicked => { NativeSettings.save(); } }
         SmithButton { text: "Test saved connection"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.test(); } }
         SmithButton { text: "Reload saved settings"; enabled: !NativeSettings.busy; clicked => { NativeSettings.reload(); } }
     }
@@ -117,8 +123,10 @@ export component NativeSetupControls inherits VerticalLayout {
         ComboBox { model: ["Balanced", "Fast", "Quiet"]; current-index <=> NativeSettings.preference-index; }
         ComboBox { model: ["Never fall back", "Ask before fallback", "Verified local fallback"]; current-index <=> NativeSettings.fallback-index; }
     }
-    ComboBox { model: ["Automatic backend", "CPU", "Metal", "CUDA", "ROCm / HIP", "Intel SYCL", "Vulkan", "MLX · use MLX engine"]; current-index <=> NativeSettings.backend-index; }
+    ComboBox { model: NativeSettings.backend-choices; current-index <=> NativeSettings.backend-index; }
 
+    if NativeSettings.unavailable-backend!="": Label {text:NativeSettings.unavailable-backend;}
+    Label {text:"Available backends depend on this computer and the selected runtime. File checks verify support before loading.";}
     HorizontalLayout {
         spacing: 8px;
         LineEdit { placeholder-text: "Context tokens · Auto"; text <=> NativeSettings.context; }
@@ -138,7 +146,7 @@ export component NativeSetupControls inherits VerticalLayout {
     }
     HorizontalLayout {
         spacing: 8px;
-        SmithButton { text: "Save inference preferences"; kind: "primary"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.preferences(); } }
+        SmithButton { text: "Save inference preferences"; kind: "primary"; enabled: NativeSettings.backend-index>=0 && NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.preferences(); } }
         SmithButton { text: "Reset overrides"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.reset(); } }
         SmithButton { text: "Previous saved settings"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.rollback(); } }
     }
@@ -147,8 +155,9 @@ export component NativeSetupControls inherits VerticalLayout {
     SmithButton { text: "Inspect this computer"; enabled: NativeSettings.available && !NativeSettings.busy; clicked => { NativeSettings.inventory(); } }
     if NativeSettings.details: ReviewText { text: NativeSettings.inventory-status; }
     Label { text: "Existing runtime and model files"; }
-    HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Existing runtime executable path"; text <=> NativeSettings.executable; } SmithButton { text: "Choose runtime…"; enabled: !NativeSettings.busy; clicked => { NativeSettings.pick-executable(); } } }
-    HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Existing GGUF model path"; text <=> NativeSettings.model; } SmithButton { text: "Choose model…"; enabled: !NativeSettings.busy; clicked => { NativeSettings.pick-model(); } } }
+    if !NativePlatform.pickers: Label { text: "Enter existing local paths below. File selection is unavailable in this build."; }
+    HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Existing runtime executable path"; text <=> NativeSettings.executable; } SmithButton { text: "Choose runtime…"; enabled:NativePlatform.pickers && !NativeSettings.busy; clicked => { NativeSettings.pick-executable(); } } }
+    HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Existing GGUF model path"; text <=> NativeSettings.model; } SmithButton { text: "Choose model…"; enabled:NativePlatform.pickers && !NativeSettings.busy; clicked => { NativeSettings.pick-model(); } } }
     LineEdit { placeholder-text: "Model display name"; text <=> NativeSettings.model-id; }
     if NativeSettings.details: HorizontalLayout {
         spacing: 8px;
