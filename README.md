@@ -34,6 +34,24 @@ provisioning, integrations, memory learning and remaining platform workflows
 have separate work outstanding. Hardware inventory and a successful build do
 not prove GPU execution or optimized performance.
 
+## What should be done next
+
+1. Complete the first-run journey: recommend a model, explain disk/memory
+   requirements, download with verification and resume, then reach a working
+   conversation.
+2. Ship a qualified macOS installer and update path, followed by actual
+   Windows/Linux lifecycle support.
+3. Add end-to-end CI around user outcomes: first launch, inference, cancellation,
+   restart, document work, and recovery.
+4. Build usable MCP integration while retaining Smith's explicit permission and
+   execution boundaries.
+
+The [next-work roadmap](docs/NEXT-STEPS.md) defines completion criteria and
+additional improvements informed by Hob: project folders, task progress and
+file undo, reusable skills, richer document results, optional media workers,
+runtime efficiency, localization, and storage management. These are planned
+changes; the current capabilities and limitations above still apply.
+
 ## Build
 
 The backend uses Rust 1.89.0 for its current build baseline. The native UI uses
